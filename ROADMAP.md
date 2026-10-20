@@ -74,6 +74,15 @@
 - [x] App icon
 - [x] Inno Setup installer (standalone + VST3 components, shortcuts, uninstaller) via `--target installer`
 
+## Done — v0.2.2 (October 2026)
+
+- [x] IR library (`Documents\Abyssal\IRs`) and NAM capture library (`Documents\Abyssal\NAM`): loaded
+      files are saved and listed in the dropdowns, with sub-folders as submenus
+- [x] Load a whole folder of IRs or NAM captures (structure kept, first file loaded)
+- [x] ‹ / › stepping through a pack, remove-from-library (to the Recycle Bin), open-folder
+- [x] Tooltips enabled across the UI
+- [x] `AbyssalRender --libtest`: 16-check self-test of the library (import, de-dupe, step, remove)
+
 ---
 
 ## Next — v0.3: playability

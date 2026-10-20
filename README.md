@@ -102,6 +102,23 @@ selector, input gain, output mode or bypass. Favourites are shared by every inst
 - **Reaper:** for a mono-recorded guitar on a stereo track, leave the input on **Left** (or **Mono Sum**).
   Use output **Mono** and pan two takes hard left and right for a classic double-tracked rhythm.
 
+## IR and capture libraries
+
+Each cab slot and the amp's capture picker have a dropdown backed by a library folder:
+
+| Library | Folder |
+|---|---|
+| Cab IRs (.wav / .aif / .flac) | `Documents\Abyssal\IRs\` |
+| NAM captures (.nam) | `Documents\Abyssal\NAM\` |
+
+- **Load file / Load folder:** loading an IR or capture copies it into the library, so it stays in the
+  dropdown for every slot, project and preset. **Load folder** imports a whole pack, keeping its
+  sub-folders, which then appear as submenus. The first file is loaded straight away. Files you drop
+  into these folders yourself show up too.
+- **‹ / ›** step through the current file's folder, for auditioning a pack quickly.
+- **Remove from library** moves the file to the Recycle Bin; any slot using it falls back to a built-in cab.
+- Identical files are never duplicated. Broken files are rejected before they're copied.
+
 ## Where to get captures and IRs
 
 - NAM captures: [tone3000.com](https://www.tone3000.com) has thousands of free `.nam` files
