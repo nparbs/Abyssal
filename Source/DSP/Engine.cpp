@@ -11,21 +11,28 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     maxBlock = std::max (32, maxBlockSize);
 
     mono.setSize (1, maxBlock);
-    dryScratch.setSize (1, maxBlock);
+    dry.setSize (2, maxBlock);
     namScratch.setSize (1, maxBlock);
     work.setSize (2, maxBlock);
-    stereoDry.setSize (2, maxBlock);
+    fxTmp.setSize (2, maxBlock);
+    bypassDry.setSize (2, maxBlock);
 
     inGain.reset (sr, 0.03);
     outGain.reset (sr, 0.03);
     namMix.reset (sr, 0.05);
 
-    gate.prepare (sr, maxBlock);
-    octaver.prepare (sr, maxBlock);
-    drop.prepare (sr, maxBlock);
-    comp.prepare (sr, maxBlock);
-    od.prepare (sr, maxBlock);
-    geq.prepare (sr, maxBlock);
+    for (int c = 0; c < 2; ++c)
+    {
+        gate[c].prepare (sr, maxBlock);
+        octaver[c].prepare (sr, maxBlock);
+        drop[c].prepare (sr, maxBlock);
+        comp[c].prepare (sr, maxBlock);
+        od[c].prepare (sr, maxBlock);
+        geq[c].prepare (sr, maxBlock);
+        latencyLine[c].assign (1024, 0.0f);
+    }
+    latencyWrite = 0;
+
     amp.prepare (sr, maxBlock);
     nam.prepare (sr, maxBlock);
     cab.prepare (sr, maxBlock);
@@ -35,106 +42,153 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     delay.prepare (sr, maxBlock);
     reverb.prepare (sr, maxBlock);
 
-    for (auto* r : { &gateRamp, &octRamp, &dropRamp, &compRamp, &odRamp, &geqRamp,
-                     &peqRamp, &chorusRamp, &flangerRamp, &delayRamp, &reverbRamp })
-        r->prepare (sr, false);
+    for (auto& r : ramps) r.prepare (sr, false);
+    peqRamp.prepare (sr, false);
+    bypassRamp.prepare (sr, true);
+    activeOrder = packedOrder.load();
 }
 
 void Engine::reset()
 {
-    gate.reset(); octaver.reset(); drop.reset(); comp.reset(); od.reset(); geq.reset();
+    for (int id = 0; id < numFx; ++id) resetPedal (id);
     amp.reset(); nam.reset(); cab.reset(); peq.reset();
-    chorus.reset(); flanger.reset(); delay.reset(); reverb.reset();
 }
 
-template <typename Module, typename Params>
-void Engine::runMono (Module& m, BypassRamp& ramp, bool on, const Params& params, int n)
+void Engine::resetPedal (int id)
 {
-    ramp.setOn (on);
-    if (! ramp.isActive()) { ramp.wasActive = false; return; }
-    if (! ramp.wasActive)  { m.reset(); ramp.wasActive = true; }
-
-    float* d = mono.getWritePointer (0);
-    const bool fading = ramp.isFading();
-    if (fading)
-        std::copy (d, d + n, dryScratch.getWritePointer (0));
-
-    m.process (d, n, params);
-
-    if (fading)
-        ramp.blend (dryScratch.getReadPointer (0), d, n);
+    switch (id)
+    {
+        case fxGate:      gate[0].reset(); gate[1].reset(); break;
+        case fxOctaver:   octaver[0].reset(); octaver[1].reset(); break;
+        case fxDrop:      drop[0].reset(); drop[1].reset(); break;
+        case fxComp:      comp[0].reset(); comp[1].reset(); break;
+        case fxOverdrive: od[0].reset(); od[1].reset(); break;
+        case fxGEQ:       geq[0].reset(); geq[1].reset(); break;
+        case fxChorus:    chorus.reset(); break;
+        case fxFlanger:   flanger.reset(); break;
+        case fxDelay:     delay.reset(); break;
+        case fxReverb:    reverb.reset(); break;
+        default: break;
+    }
 }
 
+/** Runs a module behind a click-free bypass. `b` is null for mono. */
 template <typename Fn, typename ResetFn>
-void Engine::runStereo (BypassRamp& ramp, bool on, int n, Fn&& processFn, ResetFn&& resetFn)
+void Engine::runRamp (BypassRamp& ramp, bool on, int n, float* a, float* b, Fn&& processFn, ResetFn&& resetFn)
 {
     ramp.setOn (on);
     if (! ramp.isActive()) { ramp.wasActive = false; return; }
     if (! ramp.wasActive)  { resetFn(); ramp.wasActive = true; }
 
-    float* l = work.getWritePointer (0);
-    float* r = work.getWritePointer (1);
     const bool fading = ramp.isFading();
+    float* d0 = dry.getWritePointer (0);
+    float* d1 = dry.getWritePointer (1);
     if (fading)
     {
-        std::copy (l, l + n, stereoDry.getWritePointer (0));
-        std::copy (r, r + n, stereoDry.getWritePointer (1));
+        std::copy (a, a + n, d0);
+        if (b != nullptr) std::copy (b, b + n, d1);
     }
 
-    processFn (l, r, n);
+    processFn();
 
     if (fading)
-        ramp.blend (stereoDry.getReadPointer (0), stereoDry.getReadPointer (1), l, r, n);
+    {
+        if (b != nullptr) ramp.blend (d0, d1, a, b, n);
+        else              ramp.blend (d0, a, n);
+    }
 }
 
-void Engine::process (juce::AudioBuffer<float>& buffer, const EngineParams& p)
+static bool pedalOn (int id, const EngineParams& p)
 {
-    const int total = buffer.getNumSamples();
-    const int numCh = buffer.getNumChannels();
-    if (numCh == 0 || total == 0)
-        return;
-
-    float* chans[2] = { buffer.getWritePointer (0), buffer.getWritePointer (numCh > 1 ? 1 : 0) };
-
-    for (int start = 0; start < total; start += maxBlock)
+    switch (id)
     {
-        const int n = std::min (maxBlock, total - start);
-        float* sub[2] = { chans[0] + start, chans[1] + start };
-        processChunk (sub, numCh, n, p);
+        case fxGate:      return p.gate.on;
+        case fxOctaver:   return p.octaver.on;
+        case fxDrop:      return p.drop.on;
+        case fxComp:      return p.comp.on;
+        case fxOverdrive: return p.od.on;
+        case fxGEQ:       return p.geq.on;
+        case fxChorus:    return p.chorus.on;
+        case fxFlanger:   return p.flanger.on;
+        case fxDelay:     return p.delay.on;
+        case fxReverb:    return p.reverb.on;
+        default:          return false;
     }
 }
 
-void Engine::processChunk (float* const* io, int numChannels, int n, const EngineParams& p)
+/** Pre-amp position: everything works on the mono buffer. */
+void Engine::processPedalMono (int id, int n, const EngineParams& p)
 {
     float* m = mono.getWritePointer (0);
+    auto reset = [this, id] { resetPedal (id); };
 
-    // ---- input (guitar is taken from the first input channel)
-    inGain.setTargetValue (dbToGain (p.inGainDb));
-    float inPk = 0;
-    for (int i = 0; i < n; ++i)
+    // Stereo effects in a mono slot: duplicate, process, fold back down.
+    auto viaStereo = [&] (auto&& stereoFn)
     {
-        m[i] = io[0][i] * inGain.getNextValue();
-        inPk = std::max (inPk, std::abs (m[i]));
-    }
-    inputPeak = std::max (inPk, inputPeak.load() * 0.9f);
+        float* l = fxTmp.getWritePointer (0);
+        float* r = fxTmp.getWritePointer (1);
+        std::copy (m, m + n, l);
+        std::copy (m, m + n, r);
+        stereoFn (l, r);
+        for (int i = 0; i < n; ++i) m[i] = 0.5f * (l[i] + r[i]);
+    };
 
-    // ---- pre-amp pedals
-    runMono (gate,    gateRamp, p.gate.on,    p.gate,    n);
-    gateGainReduction = gateRamp.isActive() ? gate.getGainReductionDb() : 0.0f;
-    runMono (octaver, octRamp,  p.octaver.on, p.octaver, n);
-    runMono (drop,    dropRamp, p.drop.on,    p.drop,    n);
-    runMono (comp,    compRamp, p.comp.on,    p.comp,    n);
-    runMono (od,      odRamp,   p.od.on,      p.od,      n);
-    runMono (geq,     geqRamp,  p.geq.on,     p.geq,     n);
+    auto& ramp = ramps[id];
+    const bool on = pedalOn (id, p);
+    switch (id)
+    {
+        case fxGate:      runRamp (ramp, on, n, m, nullptr, [&] { gate[0].process (m, n, p.gate); }, reset); break;
+        case fxOctaver:   runRamp (ramp, on, n, m, nullptr, [&] { octaver[0].process (m, n, p.octaver); }, reset); break;
+        case fxDrop:      runRamp (ramp, on, n, m, nullptr, [&] { drop[0].process (m, n, p.drop); }, reset); break;
+        case fxComp:      runRamp (ramp, on, n, m, nullptr, [&] { comp[0].process (m, n, p.comp); }, reset); break;
+        case fxOverdrive: runRamp (ramp, on, n, m, nullptr, [&] { od[0].process (m, n, p.od); }, reset); break;
+        case fxGEQ:       runRamp (ramp, on, n, m, nullptr, [&] { geq[0].process (m, n, p.geq); }, reset); break;
+        case fxChorus:    runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { chorus.process (l, r, n, p.chorus); }); }, reset); break;
+        case fxFlanger:   runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { flanger.process (l, r, n, p.flanger); }); }, reset); break;
+        case fxDelay:     runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { delay.process (l, r, n, p.delay, p.bpm); }); }, reset); break;
+        case fxReverb:    runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { reverb.process (l, r, n, p.reverb); }); }, reset); break;
+        default: break;
+    }
+}
+
+/** Post-amp position: everything works on the stereo work buffer. */
+void Engine::processPedalStereo (int id, int n, const EngineParams& p)
+{
+    float* l = work.getWritePointer (0);
+    float* r = work.getWritePointer (1);
+    auto reset = [this, id] { resetPedal (id); };
+
+    auto& ramp = ramps[id];
+    const bool on = pedalOn (id, p);
+    switch (id)
+    {
+        case fxGate:      runRamp (ramp, on, n, l, r, [&] { gate[0].process (l, n, p.gate); gate[1].process (r, n, p.gate); }, reset); break;
+        case fxOctaver:   runRamp (ramp, on, n, l, r, [&] { octaver[0].process (l, n, p.octaver); octaver[1].process (r, n, p.octaver); }, reset); break;
+        case fxDrop:      runRamp (ramp, on, n, l, r, [&] { drop[0].process (l, n, p.drop); drop[1].process (r, n, p.drop); }, reset); break;
+        case fxComp:      runRamp (ramp, on, n, l, r, [&] { comp[0].process (l, n, p.comp); comp[1].process (r, n, p.comp); }, reset); break;
+        case fxOverdrive: runRamp (ramp, on, n, l, r, [&] { od[0].process (l, n, p.od); od[1].process (r, n, p.od); }, reset); break;
+        case fxGEQ:       runRamp (ramp, on, n, l, r, [&] { geq[0].process (l, n, p.geq); geq[1].process (r, n, p.geq); }, reset); break;
+        case fxChorus:    runRamp (ramp, on, n, l, r, [&] { chorus.process (l, r, n, p.chorus); }, reset); break;
+        case fxFlanger:   runRamp (ramp, on, n, l, r, [&] { flanger.process (l, r, n, p.flanger); }, reset); break;
+        case fxDelay:     runRamp (ramp, on, n, l, r, [&] { delay.process (l, r, n, p.delay, p.bpm); }, reset); break;
+        case fxReverb:    runRamp (ramp, on, n, l, r, [&] { reverb.process (l, r, n, p.reverb); }, reset); break;
+        default: break;
+    }
+}
+
+void Engine::processAmpBlock (int n, const EngineParams& p)
+{
+    float* m = mono.getWritePointer (0);
 
     // ---- amp: DSP model or NAM capture, crossfaded when switching
     namMix.setTargetValue (p.useNam && nam.hasModel() ? 1.0f : 0.0f);
     if (! namMix.isSmoothing() && namMix.getTargetValue() > 0.5f)
     {
-        std::copy (m, m + n, dryScratch.getWritePointer (0));
+        float* d = dry.getWritePointer (0);
+        std::copy (m, m + n, d);
         if (! nam.process (m, n, p.namInDb, p.namOutDb))
         {
-            std::copy (dryScratch.getReadPointer (0), dryScratch.getReadPointer (0) + n, m);
+            std::copy (d, d + n, m);
             amp.process (m, n, p.amp);
         }
     }
@@ -156,22 +210,98 @@ void Engine::processChunk (float* const* io, int numChannels, int n, const Engin
         }
     }
 
-    // ---- cabinet (mono -> stereo)
+    // ---- cabinet (mono -> stereo), then the post EQ
     float* l = work.getWritePointer (0);
     float* r = work.getWritePointer (1);
     cab.process (m, l, r, n, p.cab);
+    runRamp (peqRamp, p.peq.on, n, l, r, [&] { peq.process (l, r, n, p.peq); }, [&] { peq.reset(); });
+}
 
-    // ---- post FX
-    runStereo (peqRamp, p.peq.on, n,
-               [&] (float* a, float* b, int k) { peq.process (a, b, k, p.peq); }, [&] { peq.reset(); });
-    runStereo (chorusRamp, p.chorus.on, n,
-               [&] (float* a, float* b, int k) { chorus.process (a, b, k, p.chorus); }, [&] { chorus.reset(); });
-    runStereo (flangerRamp, p.flanger.on, n,
-               [&] (float* a, float* b, int k) { flanger.process (a, b, k, p.flanger); }, [&] { flanger.reset(); });
-    runStereo (delayRamp, p.delay.on, n,
-               [&] (float* a, float* b, int k) { delay.process (a, b, k, p.delay, p.bpm); }, [&] { delay.reset(); });
-    runStereo (reverbRamp, p.reverb.on, n,
-               [&] (float* a, float* b, int k) { reverb.process (a, b, k, p.reverb); }, [&] { reverb.reset(); });
+void Engine::process (juce::AudioBuffer<float>& buffer, const EngineParams& p)
+{
+    const int total = buffer.getNumSamples();
+    const int numCh = buffer.getNumChannels();
+    lastBlockPeak = 0.0f;
+    if (numCh == 0 || total == 0)
+        return;
+
+    // Pick up a new pedal order; pedals restart cleanly when the chain is rearranged.
+    const auto order = packedOrder.load();
+    if (order != activeOrder)
+    {
+        activeOrder = order;
+        for (int id = 0; id < numFx; ++id) resetPedal (id);
+    }
+
+    float* chans[2] = { buffer.getWritePointer (0), buffer.getWritePointer (numCh > 1 ? 1 : 0) };
+
+    for (int start = 0; start < total; start += maxBlock)
+    {
+        const int n = std::min (maxBlock, total - start);
+        float* sub[2] = { chans[0] + start, chans[1] + start };
+        processChunk (sub, numCh, n, p);
+    }
+}
+
+void Engine::processChunk (float* const* io, int numChannels, int n, const EngineParams& p)
+{
+    float* m = mono.getWritePointer (0);
+    float* l = work.getWritePointer (0);
+    float* r = work.getWritePointer (1);
+    const float* inL = io[0];
+    const float* inR = numChannels > 1 ? io[1] : io[0];
+
+    // ---- latency-aligned dry copy for host bypass
+    {
+        const int lat = juce::jlimit (0, 1000, getLatencySamples());
+        const int size = (int) latencyLine[0].size();
+        float* bl = bypassDry.getWritePointer (0);
+        float* br = bypassDry.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
+        {
+            latencyLine[0][(size_t) latencyWrite] = inL[i];
+            latencyLine[1][(size_t) latencyWrite] = inR[i];
+            const int rd = (latencyWrite - lat + size) % size;
+            bl[i] = latencyLine[0][(size_t) rd];
+            br[i] = latencyLine[1][(size_t) rd];
+            latencyWrite = (latencyWrite + 1) % size;
+        }
+    }
+
+    bypassRamp.setOn (! p.bypass);
+    if (! bypassRamp.isActive())
+    {
+        bypassRamp.wasActive = false;
+        std::copy (bypassDry.getReadPointer (0), bypassDry.getReadPointer (0) + n, io[0]);
+        if (numChannels > 1)
+            std::copy (bypassDry.getReadPointer (1), bypassDry.getReadPointer (1) + n, io[1]);
+        inputPeak = inputPeak.load() * 0.9f;
+        outputPeak = outputPeak.load() * 0.9f;
+        return;
+    }
+    if (! bypassRamp.wasActive) { reset(); bypassRamp.wasActive = true; }
+
+    // ---- input select + gain
+    inGain.setTargetValue (dbToGain (p.inGainDb));
+    float inPk = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = p.inputMode == 1 ? inR[i] : p.inputMode == 2 ? 0.5f * (inL[i] + inR[i]) : inL[i];
+        m[i] = x * inGain.getNextValue();
+        inPk = std::max (inPk, std::abs (m[i]));
+    }
+    inputPeak = std::max (inPk, inputPeak.load() * 0.9f);
+
+    // ---- the chain, in the user's order
+    const auto order = ChainOrder::unpack (activeOrder);
+    bool postAmp = false;
+    for (int id : order.slots)
+    {
+        if (id == fxAmpBlock) { processAmpBlock (n, p); postAmp = true; }
+        else if (postAmp)     processPedalStereo (id, n, p);
+        else                  processPedalMono (id, n, p);
+    }
+    gateGainReduction = ramps[fxGate].isActive() ? gate[0].getGainReductionDb() : 0.0f;
 
     // ---- output
     outGain.setTargetValue (dbToGain (p.outGainDb));
@@ -181,6 +311,8 @@ void Engine::processChunk (float* const* io, int numChannels, int n, const Engin
         const float g = outGain.getNextValue();
         l[i] *= g;
         r[i] *= g;
+        if (p.monoOut)
+            l[i] = r[i] = 0.5f * (l[i] + r[i]);
         outPk = std::max (outPk, std::max (std::abs (l[i]), std::abs (r[i])));
     }
 
@@ -192,7 +324,12 @@ void Engine::processChunk (float* const* io, int numChannels, int n, const Engin
         std::fill (r, r + n, 0.0f);
         outPk = 0;
     }
+    lastBlockPeak = std::max (lastBlockPeak, outPk);
     outputPeak = std::max (outPk, outputPeak.load() * 0.9f);
+
+    // Host bypass crossfade against the latency-aligned dry signal.
+    if (bypassRamp.isFading())
+        bypassRamp.blend (bypassDry.getReadPointer (0), bypassDry.getReadPointer (1), l, r, n);
 
     if (numChannels > 1)
     {

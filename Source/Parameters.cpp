@@ -55,6 +55,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 
     b.flt (ids::inGain,  "Input",  -24.0f, 24.0f, 0.0f, "dB", 0.0f, 0.1f);
     b.flt (ids::outGain, "Output", -24.0f, 24.0f, 0.0f, "dB", 0.0f, 0.1f);
+    b.choice (ids::inputMode, "Input Channel", { "Left", "Right", "Mono Sum" }, 0);
+    b.choice (ids::outputMode, "Output Mode", { "Stereo", "Mono" }, 0);
+    b.toggle (ids::bypass, "Bypass", false);
 
     b.toggle (ids::gateOn, "Gate On", true);
     b.flt (ids::gateThresh,  "Gate Threshold", -96.0f, -10.0f, -62.0f, "dB", 0.0f, 0.1f);
@@ -157,6 +160,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     return layout;
 }
 
+bool isGlobalParameter (const juce::String& paramId)
+{
+    return paramId == ids::inGain || paramId == ids::inputMode || paramId == ids::outputMode || paramId == ids::bypass;
+}
+
 //==============================================================================
 ParamCache::ParamCache (juce::AudioProcessorValueTreeState& apvts)
 {
@@ -182,6 +190,9 @@ void ParamCache::fill (EngineParams& p) const
 {
     p.inGainDb  = get (ids::inGain);
     p.outGainDb = get (ids::outGain);
+    p.inputMode = (int) get (ids::inputMode);
+    p.monoOut   = get (ids::outputMode) > 0.5f;
+    p.bypass    = on (ids::bypass);
 
     p.gate = { on (ids::gateOn), get (ids::gateThresh), get (ids::gateRelease) };
     p.octaver = { on (ids::octOn), get (ids::octDry), get (ids::octDown1), get (ids::octDown2) };

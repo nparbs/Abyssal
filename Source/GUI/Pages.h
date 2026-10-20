@@ -1,23 +1,60 @@
 #pragma once
 
 #include "Widgets.h"
+#include "../DSP/Chain.h"
 
 class AbyssalProcessor;
 
 namespace abyssal::ui
 {
 
-//============================================================================== Pre-amp pedalboard
-class PreFXPage : public juce::Component
+//============================================================================== Pedalboards
+/** Owns one pedal component per effect. Pedals are re-parented between the pre-amp and post-amp
+    boards as the chain order changes. */
+class PedalSet
 {
 public:
-    explicit PreFXPage (AbyssalProcessor&);
-    void resized() override;
-    void paint (juce::Graphics&) override;
+    explicit PedalSet (AbyssalProcessor&);
+    Pedal& get (int fxId) { return *pedals[(size_t) fxId]; }
 
 private:
-    Pedal gate, octaver, drop, comp, od, geq;
-    juce::OwnedArray<Fader> faders;
+    void showContextMenu (Pedal&);
+    AbyssalProcessor& proc;
+    std::array<std::unique_ptr<Pedal>, abyssal::numFx> pedals;
+};
+
+/** One side of the amp. Shows that section's pedals in order and accepts dropped pedals. */
+class BoardPage : public juce::Component,
+                  public juce::DragAndDropTarget,
+                  private juce::ChangeListener
+{
+public:
+    BoardPage (AbyssalProcessor&, PedalSet&, bool preAmp);
+    ~BoardPage() override;
+
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
+    void visibilityChanged() override { if (isVisible()) rebuild(); }
+
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragEnter (const SourceDetails& d) override { itemDragMove (d); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { insertIndex = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { rebuild(); }
+    void rebuild();
+    int insertionIndexFor (juce::Point<int>) const;
+
+    AbyssalProcessor& proc;
+    PedalSet& set;
+    const bool preAmp;
+    juce::Array<int> items;
+    juce::Array<juce::Rectangle<int>> cells;
+    juce::Rectangle<int> boardArea;
+    int insertIndex = -1;
 };
 
 //============================================================================== Amp head
@@ -58,12 +95,13 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;
     juce::Rectangle<float> speakerBounds() const;
     juce::Point<float> micPoint (int slot) const;
 
     AbyssalProcessor& proc;
     int dragging = -1;
+    float lastState[4] { -1, -1, -1, -1 };
 };
 
 class CabSlotPanel : public juce::Component
@@ -143,26 +181,19 @@ private:
     juce::OwnedArray<Knob> knobs;
 };
 
-//============================================================================== Post FX
-class PostFXPage : public juce::Component, private juce::Timer
-{
-public:
-    explicit PostFXPage (AbyssalProcessor&);
-    void resized() override;
-    void paint (juce::Graphics&) override;
-
-private:
-    void timerCallback() override;
-    AbyssalProcessor& proc;
-    Pedal chorus, flanger, delay, reverb;
-    Knob* delayTime = nullptr;
-};
-
 //============================================================================== Signal chain navigator
-class ChainBar : public juce::Component, private juce::Timer
+class ChainBar : public juce::Component,
+                 public juce::DragAndDropTarget,
+                 private juce::Timer
 {
 public:
     explicit ChainBar (AbyssalProcessor&);
+
+    // Drop a pedal on PRE FX / POST FX to move it across the amp; hovering switches page.
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { dragHover = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -174,12 +205,15 @@ public:
     static constexpr int numBlocks = 5;
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;
+    int blockAt (juce::Point<float>) const;
     juce::Rectangle<float> blockBounds (int i) const;
     juce::String statusFor (int i, bool& lit) const;
 
     AbyssalProcessor& proc;
-    int selected = 1, hover = -1;
+    int selected = 1, hover = -1, dragHover = -1;
+    juce::uint32 dragHoverStart = 0;
+    juce::StringArray lastStatus;
 };
 
 } // namespace abyssal::ui

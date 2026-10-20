@@ -180,6 +180,8 @@ Pedal::Pedal (APVTS& s, const juce::String& n, const juce::String& onId, juce::C
     : state (s), name (n), body (b), accent (a), footswitch (s, onId, a)
 {
     onParam = s.getParameter (onId);
+    setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+    footswitch.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     footswitch.onStateChange = [this] { repaint(); };
     addAndMakeVisible (footswitch);
 }
@@ -252,6 +254,35 @@ void Pedal::resized()
     }
 }
 
+void Pedal::mouseDown (const juce::MouseEvent& e)
+{
+    dragStarted = false;
+    if (e.mods.isPopupMenu() && onContextMenu)
+        onContextMenu (*this);
+}
+
+void Pedal::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragStarted || fxId < 0 || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 6)
+        return;
+    if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor (this))
+    {
+        dragStarted = true;
+        container->startDragging ("fx:" + juce::String (fxId), this);
+    }
+}
+
+void Pedal::paintOverChildren (juce::Graphics& g)
+{
+    // Dim the pedal while it is being dragged so the drop target reads clearly.
+    auto* container = juce::DragAndDropContainer::findParentDragContainerFor (const_cast<Pedal*> (this));
+    if (dragStarted && container != nullptr && container->isDragAndDropActive())
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 12.0f);
+    }
+}
+
 void Pedal::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (3.0f);
@@ -285,6 +316,42 @@ void Pedal::paint (juce::Graphics& g)
     g.setColour (lightBody ? juce::Colour (0xff15161a) : juce::Colours::white.withAlpha (on ? 0.95f : 0.6f));
     g.setFont (font (std::min (19.0f, plate.getWidth() / (float) std::max (4, name.length()) * 1.6f), true));
     g.drawText (name.toUpperCase(), plate, juce::Justification::centred);
+}
+
+//============================================================================== GraphicEQPedal
+GraphicEQPedal::GraphicEQPedal (APVTS& s, const juce::String& onId, const juce::StringArray& bandParams,
+                                const juce::StringArray& bandLabels, const juce::String& levelParam)
+    : Pedal (s, "Graphic EQ", onId, juce::Colour (0xff3a3e46), colours::amber)
+{
+    for (int i = 0; i < bandParams.size(); ++i)
+        addAndMakeVisible (faders.add (new Fader (s, bandParams[i], bandLabels[i], colours::amber)));
+    addAndMakeVisible (faders.add (new Fader (s, levelParam, "LEVEL", colours::accent)));
+
+    setBodyArea ([this] (juce::Rectangle<int> r)
+    {
+        r = r.reduced (6, 0);
+        const int w = r.getWidth() / faders.size();
+        for (int i = 0; i < faders.size(); ++i)
+        {
+            if (i == faders.size() - 1) r.removeFromLeft (4); // separate the level fader
+            faders[i]->setBounds (r.removeFromLeft (w).reduced (1, 0));
+        }
+    });
+}
+
+//============================================================================== DelayPedal
+DelayPedal::DelayPedal (APVTS& s, const juce::String& onId, const juce::String& syncParam, juce::Colour b, juce::Colour a)
+    : Pedal (s, "Delay", onId, b, a)
+{
+    sync = s.getRawParameterValue (syncParam);
+    startTimerHz (5);
+}
+
+void DelayPedal::timerCallback()
+{
+    const bool synced = sync != nullptr && sync->load() > 0.5f;
+    if (timeKnob != nullptr && timeKnob->isEnabled() == synced)
+        timeKnob->setEnabled (! synced);
 }
 
 //============================================================================== LevelMeter

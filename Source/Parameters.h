@@ -10,6 +10,7 @@ namespace ids
 {
     // global
     inline const juce::String inGain = "in_gain", outGain = "out_gain";
+    inline const juce::String inputMode = "io_input", outputMode = "io_output", bypass = "bypass";
     // gate
     inline const juce::String gateOn = "gate_on", gateThresh = "gate_thresh", gateRelease = "gate_release";
     // octaver
@@ -48,6 +49,9 @@ namespace ids
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+/** Setup parameters (routing, input level, bypass) that presets never change. */
+bool isGlobalParameter (const juce::String& paramId);
 
 /** Caches raw parameter pointers so the audio thread can build an EngineParams snapshot cheaply. */
 class ParamCache

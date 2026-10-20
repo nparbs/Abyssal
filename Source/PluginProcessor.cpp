@@ -5,11 +5,13 @@ using namespace abyssal;
 
 AbyssalProcessor::AbyssalProcessor()
     : AudioProcessor (BusesProperties()
-                          .withInput ("Input", juce::AudioChannelSet::mono(), true)
+                          .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createParameterLayout()),
       cache (apvts)
 {
+    uiScale = presets.getDefaultUiScale();
+    engine.setChainOrder (chainOrder);
     startTimerHz (20);
 }
 
@@ -23,20 +25,31 @@ bool AbyssalProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return inOk && outOk;
 }
 
+juce::AudioProcessorParameter* AbyssalProcessor::getBypassParameter() const
+{
+    return apvts.getParameter (ids::bypass);
+}
+
 void AbyssalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentRate = sampleRate;
     engine.prepare (sampleRate, samplesPerBlock);
     syncCabSources();
     setLatencySamples (engine.getLatencySamples());
+    silentInputSamples = quietOutputSamples = 0;
 }
 
 void AbyssalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int n = buffer.getNumSamples();
+    const int numIn = getTotalNumInputChannels();
 
-    for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
-        buffer.clear (ch, 0, buffer.getNumSamples());
+    // A mono input bus feeds both sides so the Left/Right/Sum input selector always has signal.
+    if (numIn == 1 && buffer.getNumChannels() > 1)
+        buffer.copyFrom (1, 0, buffer, 0, 0, n);
+    for (int ch = std::max (numIn, 2); ch < buffer.getNumChannels(); ++ch)
+        buffer.clear (ch, 0, n);
 
     cache.fill (params);
     if (auto* ph = getPlayHead())
@@ -44,7 +57,27 @@ void AbyssalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
             if (auto bpm = pos->getBpm())
                 params.bpm = *bpm;
 
+    // Idle skip: if the input has been silent for a second and the output (including delay and
+    // reverb tails) has stayed below -100 dBFS for longer than the longest delay, stop processing.
+    // Saves CPU on tracks that aren't playing; processing resumes on the first non-silent sample.
+    float inPk = 0;
+    for (int ch = 0; ch < std::min (numIn, buffer.getNumChannels()); ++ch)
+        inPk = std::max (inPk, buffer.getMagnitude (ch, 0, n));
+
+    silentInputSamples = inPk < 1.0e-6f ? silentInputSamples + n : 0;
+    const bool idle = ! params.bypass
+                      && silentInputSamples > (juce::int64) currentRate
+                      && quietOutputSamples > (juce::int64) (currentRate * 2.6);
+    if (idle)
+    {
+        buffer.clear();
+        engine.inputPeak = 0.0f;
+        engine.outputPeak = 0.0f;
+        return;
+    }
+
     engine.process (buffer, params);
+    quietOutputSamples = engine.lastBlockPeak < 1.0e-5f ? quietOutputSamples + n : 0;
 }
 
 //============================================================================== files
@@ -85,15 +118,17 @@ juce::String AbyssalProcessor::loadUserIR (int slot, const juce::File& file)
     return engine.getCabinet().loadUserIR (slot, file);
 }
 
-//============================================================================== presets
-juce::File AbyssalProcessor::getUserPresetDirectory() const
+//============================================================================== chain order
+void AbyssalProcessor::setChainOrder (const ChainOrder& order)
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                   .getChildFile ("Abyssal").getChildFile ("Presets");
-    dir.createDirectory();
-    return dir;
+    if (order == chainOrder)
+        return;
+    chainOrder = order;
+    engine.setChainOrder (order);
+    chainChanged.sendChangeMessage();
 }
 
+//============================================================================== presets
 int AbyssalProcessor::getNumPrograms() { return (int) getFactoryPresets().size(); }
 
 const juce::String AbyssalProcessor::getProgramName (int index)
@@ -102,49 +137,94 @@ const juce::String AbyssalProcessor::getProgramName (int index)
     return juce::isPositiveAndBelow (index, (int) p.size()) ? p[(size_t) index].name : juce::String();
 }
 
-void AbyssalProcessor::setCurrentProgram (int index) { loadFactoryPreset (index); }
+void AbyssalProcessor::setCurrentProgram (int index)
+{
+    // Some hosts re-send the current program while restoring a project; ignoring a no-op change
+    // stops them from wiping the restored sound back to the factory preset.
+    if (index == currentProgram)
+        return;
+    loadFactoryPreset (index);
+}
+
+void AbyssalProcessor::setPresetInfo (const juce::String& name, const juce::String& category, const juce::String& key)
+{
+    presetName = name;
+    presetCategory = category;
+    presetKey = key;
+    presetChanged.sendChangeMessage();
+}
 
 void AbyssalProcessor::loadFactoryPreset (int index)
 {
     const auto& p = getFactoryPresets();
     if (! juce::isPositiveAndBelow (index, (int) p.size()))
         return;
+    const auto& preset = p[(size_t) index];
     currentProgram = index;
-    applyFactoryPreset (apvts, p[(size_t) index]);
-    presetName = p[(size_t) index].name;
+    applyFactoryPreset (apvts, preset);
+    setChainOrder (preset.chain.isEmpty() ? ChainOrder::defaultOrder() : ChainOrder::fromString (preset.chain));
+    setPresetInfo (preset.name, preset.category, "factory:" + preset.name);
+}
+
+void AbyssalProcessor::loadEntry (const PresetManager::Entry& entry)
+{
+    if (entry.factory) loadFactoryPreset (entry.factoryIndex);
+    else               loadPreset (entry.file);
 }
 
 juce::ValueTree AbyssalProcessor::createStateTree()
 {
     auto state = apvts.copyState();
+    state.setProperty ("version", 2, nullptr);
     state.setProperty ("presetName", presetName, nullptr);
+    state.setProperty ("presetCategory", presetCategory, nullptr);
+    state.setProperty ("presetKey", presetKey, nullptr);
+    state.setProperty ("program", currentProgram, nullptr);
+    state.setProperty ("chainOrder", chainOrder.toString(), nullptr);
     state.setProperty ("uiPage", lastUiPage, nullptr);
+    state.setProperty ("uiScale", uiScale, nullptr);
     state.setProperty ("namPath", getNamFile().getFullPathName(), nullptr);
     state.setProperty ("irA", getUserIR (0).getFullPathName(), nullptr);
     state.setProperty ("irB", getUserIR (1).getFullPathName(), nullptr);
     return state;
 }
 
-void AbyssalProcessor::applyStateTree (const juce::ValueTree& tree)
+void AbyssalProcessor::applyStateTree (const juce::ValueTree& tree, bool keepGlobals)
 {
     if (! tree.hasType (apvts.state.getType()))
         return;
+
+    // Presets never change routing / input level / bypass.
+    std::vector<std::pair<juce::RangedAudioParameter*, float>> globals;
+    if (keepGlobals)
+        for (auto* p : getParameters())
+            if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+                if (isGlobalParameter (rp->paramID))
+                    globals.push_back ({ rp, rp->getValue() });
+
     apvts.replaceState (tree);
-    presetName = tree.getProperty ("presetName", "Init").toString();
-    lastUiPage = (int) tree.getProperty ("uiPage", 1);
+
+    for (auto& [param, value] : globals)
+        param->setValueNotifyingHost (value);
+
+    setChainOrder (ChainOrder::fromString (tree.getProperty ("chainOrder").toString()));
+    if (! keepGlobals)
+    {
+        currentProgram = (int) tree.getProperty ("program", 0);
+        lastUiPage = (int) tree.getProperty ("uiPage", 1);
+        uiScale = (double) tree.getProperty ("uiScale", uiScale);
+        setPresetInfo (tree.getProperty ("presetName", "Init").toString(),
+                       tree.getProperty ("presetCategory", "Utility").toString(),
+                       tree.getProperty ("presetKey", "factory:Init").toString());
+    }
     restoreFiles (tree);
 }
 
 void AbyssalProcessor::restoreFiles (const juce::ValueTree& state)
 {
     const juce::File nam (state.getProperty ("namPath").toString());
-    const bool wantsNam = apvts.getRawParameterValue (ids::ampMode)->load() > 0.5f;
     if (nam.existsAsFile() && nam != getNamFile())
-    {
         engine.getNam().loadModel (nam);
-        if (! wantsNam)
-            if (auto* p = apvts.getParameter (ids::ampMode)) p->setValueNotifyingHost (0.0f);
-    }
 
     const juce::String irKeys[] = { "irA", "irB" };
     for (int s = 0; s < 2; ++s)
@@ -173,19 +253,20 @@ void AbyssalProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         auto tree = juce::ValueTree::fromXml (*xml);
         if (juce::MessageManager::getInstance()->isThisTheMessageThread())
-            applyStateTree (tree);
+            applyStateTree (tree, false);
         else
-            juce::MessageManager::callAsync ([this, tree] { applyStateTree (tree); });
+            juce::MessageManager::callAsync ([this, tree] { applyStateTree (tree, false); });
     }
 }
 
 juce::String AbyssalProcessor::savePreset (const juce::File& file)
 {
     auto target = file.withFileExtension ("abyssal");
-    presetName = target.getFileNameWithoutExtension();
+    setPresetInfo (target.getFileNameWithoutExtension(), PresetManager::userCategory, "user:" + target.getFullPathName());
     auto xml = createStateTree().createXml();
     if (xml == nullptr || ! xml->writeTo (target))
         return "Couldn't write " + target.getFullPathName();
+    presets.refresh();
     return {};
 }
 
@@ -197,8 +278,8 @@ juce::String AbyssalProcessor::loadPreset (const juce::File& file)
     auto tree = juce::ValueTree::fromXml (*xml);
     if (! tree.hasType (apvts.state.getType()))
         return file.getFileName() + " is not an Abyssal preset";
-    applyStateTree (tree);
-    presetName = file.getFileNameWithoutExtension();
+    applyStateTree (tree, true);
+    setPresetInfo (file.getFileNameWithoutExtension(), PresetManager::userCategory, "user:" + file.getFullPathName());
     return {};
 }
 

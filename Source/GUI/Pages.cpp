@@ -25,89 +25,272 @@ namespace
 }
 
 //==============================================================================
-// PreFXPage
+// PedalSet
 //==============================================================================
-PreFXPage::PreFXPage (AbyssalProcessor& p)
-    : gate    (p.apvts, "Noise Gate", ids::gateOn,  juce::Colour (0xff2c3038), juce::Colour (0xff3ddc84)),
-      octaver (p.apvts, "Octaver",    ids::octOn,   juce::Colour (0xff4a2a78), juce::Colour (0xffc58cff)),
-      drop    (p.apvts, "Drop Tune",  ids::dropOn,  juce::Colour (0xff0e5661), juce::Colour (0xff4dd9ec)),
-      comp    (p.apvts, "Compressor", ids::compOn,  juce::Colour (0xff1c3d86), juce::Colour (0xff64b0ff)),
-      od      (p.apvts, "Overdrive",  ids::odOn,    juce::Colour (0xff2e7a34), juce::Colour (0xffc6ff8a)),
-      geq     (p.apvts, "Graphic EQ", ids::geqOn,   juce::Colour (0xff3a3e46), colours::amber)
+PedalSet::PedalSet (AbyssalProcessor& p) : proc (p)
 {
-    gate.addKnob (ids::gateThresh, "Threshold");
-    gate.addKnob (ids::gateRelease, "Release");
+    auto& st = p.apvts;
+    auto make = [&] (int id, Pedal* pd)
+    {
+        pd->setFxId (id);
+        pd->onContextMenu = [this] (Pedal& x) { showContextMenu (x); };
+        pedals[(size_t) id].reset (pd);
+        return pd;
+    };
 
-    octaver.addKnob (ids::octDry, "Dry");
-    octaver.addKnob (ids::octDown1, "-1 Oct");
-    octaver.addKnob (ids::octDown2, "-2 Oct");
+    auto* gate = make (fxGate, new Pedal (st, "Noise Gate", ids::gateOn, juce::Colour (0xff2c3038), juce::Colour (0xff3ddc84)));
+    gate->addKnob (ids::gateThresh, "Threshold");
+    gate->addKnob (ids::gateRelease, "Release");
 
-    drop.addKnob (ids::dropSemis, "Semitones", true);
-    drop.addKnob (ids::dropMix, "Mix");
+    auto* oct = make (fxOctaver, new Pedal (st, "Octaver", ids::octOn, juce::Colour (0xff4a2a78), juce::Colour (0xffc58cff)));
+    oct->addKnob (ids::octDry, "Dry");
+    oct->addKnob (ids::octDown1, "-1 Oct");
+    oct->addKnob (ids::octDown2, "-2 Oct");
 
-    comp.setKnobsPerRow (3);
-    comp.addKnob (ids::compThresh, "Thresh");
-    comp.addKnob (ids::compRatio, "Ratio");
-    comp.addKnob (ids::compAttack, "Attack");
-    comp.addKnob (ids::compRelease, "Release");
-    comp.addKnob (ids::compLevel, "Level");
+    auto* drop = make (fxDrop, new Pedal (st, "Drop Tune", ids::dropOn, juce::Colour (0xff0e5661), juce::Colour (0xff4dd9ec)));
+    drop->addKnob (ids::dropSemis, "Semitones", true);
+    drop->addKnob (ids::dropMix, "Mix");
 
-    od.addKnob (ids::odDrive, "Drive");
-    od.addKnob (ids::odTone, "Tone");
-    od.addKnob (ids::odLevel, "Level");
+    auto* comp = make (fxComp, new Pedal (st, "Compressor", ids::compOn, juce::Colour (0xff1c3d86), juce::Colour (0xff64b0ff)));
+    comp->setKnobsPerRow (3);
+    comp->addKnob (ids::compThresh, "Thresh");
+    comp->addKnob (ids::compRatio, "Ratio");
+    comp->addKnob (ids::compAttack, "Attack");
+    comp->addKnob (ids::compRelease, "Release");
+    comp->addKnob (ids::compLevel, "Level");
 
+    auto* od = make (fxOverdrive, new Pedal (st, "Overdrive", ids::odOn, juce::Colour (0xff2e7a34), juce::Colour (0xffc6ff8a)));
+    od->addKnob (ids::odDrive, "Drive");
+    od->addKnob (ids::odTone, "Tone");
+    od->addKnob (ids::odLevel, "Level");
+
+    juce::StringArray bandIds, bandLabels;
     for (int b = 0; b < GraphicEQParams::numBands; ++b)
     {
         const float f = GraphicEQParams::freqs[b];
-        const auto label = f >= 1000.0f ? juce::String ((int) (f / 1000.0f)) + "K" : juce::String ((int) f);
-        geq.addAndMakeVisible (faders.add (new Fader (p.apvts, ids::geqBand (b), label, colours::amber)));
+        bandIds.add (ids::geqBand (b));
+        bandLabels.add (f >= 1000.0f ? juce::String ((int) (f / 1000.0f)) + "K" : juce::String ((int) f));
     }
-    geq.addAndMakeVisible (faders.add (new Fader (p.apvts, ids::geqLevel, "LEVEL", colours::accent)));
-    geq.setBodyArea ([this] (juce::Rectangle<int> r)
-    {
-        r = r.reduced (10, 0);
-        const int w = r.getWidth() / faders.size();
-        for (int i = 0; i < faders.size(); ++i)
-        {
-            if (i == faders.size() - 1) r.removeFromLeft (4); // separate the level fader
-            faders[i]->setBounds (r.removeFromLeft (w).reduced (2, 0));
-        }
-    });
+    make (fxGEQ, new GraphicEQPedal (st, ids::geqOn, bandIds, bandLabels, ids::geqLevel));
 
-    for (auto* c : { &gate, &octaver, &drop, &comp, &od, &geq })
-        addAndMakeVisible (c);
+    auto* cho = make (fxChorus, new Pedal (st, "Chorus", ids::choOn, juce::Colour (0xff17508f), juce::Colour (0xff7cc4ff)));
+    cho->addKnob (ids::choRate, "Rate");
+    cho->addKnob (ids::choDepth, "Depth");
+    cho->addKnob (ids::choMix, "Mix");
+
+    auto* fl = make (fxFlanger, new Pedal (st, "Flanger", ids::flOn, juce::Colour (0xff5c1f86), juce::Colour (0xffe08cff)));
+    fl->addKnob (ids::flRate, "Rate");
+    fl->addKnob (ids::flDepth, "Depth");
+    fl->addKnob (ids::flFeedback, "Feedback", true);
+    fl->addKnob (ids::flMix, "Mix");
+
+    auto* dly = new DelayPedal (st, ids::dlyOn, ids::dlySync, juce::Colour (0xff353c45), colours::amber);
+    make (fxDelay, dly);
+    dly->timeKnob = &dly->addKnob (ids::dlyTime, "Time");
+    dly->addKnob (ids::dlyFeedback, "Feedback");
+    dly->addKnob (ids::dlyTone, "Tone");
+    dly->addKnob (ids::dlyMix, "Mix");
+    dly->addToggle (ids::dlySync, "SYNC");
+    dly->addChoice (ids::dlyDiv);
+    dly->addToggle (ids::dlyPing, "PING");
+
+    auto* rev = make (fxReverb, new Pedal (st, "Reverb", ids::revOn, juce::Colour (0xff0c4a43), juce::Colour (0xff5ef2d6)));
+    rev->setKnobsPerRow (3);
+    rev->addKnob (ids::revSize, "Size");
+    rev->addKnob (ids::revDamp, "Damping");
+    rev->addKnob (ids::revPredelay, "Pre-Delay");
+    rev->addKnob (ids::revWidth, "Width");
+    rev->addKnob (ids::revMix, "Mix");
 }
 
-void PreFXPage::resized()
+void PedalSet::showContextMenu (Pedal& pedal)
 {
-    auto area = getLocalBounds().reduced (24, 12);
-    auto row1 = area.removeFromTop (330);
-    const int gap = 14;
-    const int w = (row1.getWidth() - gap * 4) / 5;
-    for (auto* pd : { &gate, &octaver, &drop, &comp, &od })
+    const int id = pedal.getFxId();
+    const auto order = proc.getChainOrder();
+    const bool pre = order.isPreAmp (id);
+    const auto section = order.section (pre);
+    const int pos = section.indexOf (id);
+
+    juce::PopupMenu m;
+    m.addSectionHeader (juce::String (fxShortName (id)) + (pre ? "  -  before the amp" : "  -  after the amp"));
+    m.addItem (1, pre ? "Move after the amp" : "Move before the amp");
+    m.addItem (2, "Move left", pos > 0);
+    m.addItem (3, "Move right", pos < section.size() - 1);
+    m.addSeparator();
+    m.addItem (4, "Reset pedal order");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pedal), [this, id, pre, pos] (int r)
     {
-        pd->setBounds (row1.removeFromLeft (w));
-        row1.removeFromLeft (gap);
-    }
-    area.removeFromTop (14);
-    geq.setBounds (area.withSizeKeepingCentre (700, area.getHeight()));
+        auto o = proc.getChainOrder();
+        switch (r)
+        {
+            case 1: o.moveTo (id, ! pre, -1); break;
+            case 2: o.moveTo (id, pre, pos - 1); break;
+            case 3: o.moveTo (id, pre, pos + 1); break;
+            case 4: o = ChainOrder::defaultOrder(); break;
+            default: return;
+        }
+        proc.setChainOrder (o);
+    });
 }
 
-void PreFXPage::paint (juce::Graphics& g)
+//==============================================================================
+// BoardPage
+//==============================================================================
+BoardPage::BoardPage (AbyssalProcessor& p, PedalSet& s, bool pre) : proc (p), set (s), preAmp (pre)
+{
+    proc.chainChanged.addChangeListener (this);
+    rebuild();
+}
+
+BoardPage::~BoardPage() { proc.chainChanged.removeChangeListener (this); }
+
+void BoardPage::rebuild()
+{
+    items = proc.getChainOrder().section (preAmp);
+
+    // Let go of pedals that moved to the other side of the amp.
+    for (int i = getNumChildComponents(); --i >= 0;)
+        if (auto* pd = dynamic_cast<Pedal*> (getChildComponent (i)))
+            if (! items.contains (pd->getFxId()))
+                removeChildComponent (pd);
+
+    // Only the visible board claims its pedals, so the hidden one can't steal them back.
+    if (isVisible())
+        for (int id : items)
+            addAndMakeVisible (set.get (id));
+    resized();
+    repaint();
+}
+
+void BoardPage::resized()
+{
+    cells.clearQuick();
+    boardArea = getLocalBounds().reduced (24, 10).withTrimmedTop (30);
+    if (items.isEmpty())
+        return;
+
+    auto unitsOf = [this] (int id) { return set.get (id).getWidthUnits(); };
+    int totalUnits = 0;
+    for (int id : items) totalUnits += unitsOf (id);
+
+    const int gap = 14;
+    const int rows = totalUnits <= 6 ? 1 : 2;
+
+    // Split the pedals over the rows as evenly as possible by width.
+    juce::Array<juce::Array<int>> rowItems;
+    rowItems.resize (rows);
+    int acc = 0;
+    for (int id : items)
+    {
+        const int row = (rows == 2 && acc >= (totalUnits + 1) / 2) ? 1 : 0;
+        rowItems.getReference (row).add (id);
+        acc += unitsOf (id);
+    }
+
+    int maxUnits = 1;
+    for (auto& r : rowItems)
+    {
+        int u = 0;
+        for (int id : r) u += unitsOf (id);
+        maxUnits = std::max (maxUnits, u);
+    }
+
+    const int unitW = std::min (rows == 1 ? 260 : 230, (boardArea.getWidth() - gap * (maxUnits - 1)) / maxUnits);
+    const int rowH = rows == 1 ? std::min (boardArea.getHeight(), 470) : (boardArea.getHeight() - gap) / 2;
+    int y = rows == 1 ? boardArea.getCentreY() - rowH / 2 : boardArea.getY();
+    auto widthOf = [&] (int id) { return unitsOf (id) * unitW + (unitsOf (id) - 1) * gap; };
+
+    for (auto& r : rowItems)
+    {
+        int rowW = gap * (r.size() - 1);
+        for (int id : r) rowW += widthOf (id);
+        int x = boardArea.getCentreX() - rowW / 2;
+        for (int id : r)
+        {
+            const juce::Rectangle<int> cell (x, y, widthOf (id), rowH);
+            if (set.get (id).getParentComponent() == this)
+                set.get (id).setBounds (cell);
+            cells.add (cell);
+            x += cell.getWidth() + gap;
+        }
+        y += rowH + gap;
+    }
+}
+
+void BoardPage::paint (juce::Graphics& g)
 {
     fillPageBackground (g, getLocalBounds());
-    // Pedalboard rails
     g.setColour (juce::Colours::black.withAlpha (0.35f));
-    for (int y = 40; y < getHeight() - 10; y += 46)
+    for (int y = 60; y < getHeight() - 10; y += 46)
         g.fillRect (16, y, getWidth() - 32, 18);
 
-    // Patch cables between the pedals on the top row
-    g.setColour (juce::Colour (0xff111111));
-    for (auto [a, b] : { std::pair<juce::Component*, juce::Component*> { &gate, &octaver }, { &octaver, &drop }, { &drop, &comp }, { &comp, &od } })
+    auto title = getLocalBounds().reduced (28, 12).removeFromTop (22);
+    g.setColour (colours::textDim);
+    g.setFont (font (12.0f, true));
+    g.drawText (preAmp ? "PRE-AMP PEDALS  (MONO)" : "POST-AMP EFFECTS  (STEREO)", title, juce::Justification::centredLeft);
+    g.setFont (font (12.0f));
+    g.drawText (juce::String ("Drag to reorder  -  drop on ") + (preAmp ? "POST FX" : "PRE FX")
+                    + " above to move across the amp  -  right-click for options",
+                title, juce::Justification::centredRight);
+
+    if (items.isEmpty())
     {
-        const float y = (float) a->getY() + 40.0f;
-        g.drawLine ((float) a->getRight() - 4, y, (float) b->getX() + 4, y, 5.0f);
+        g.setFont (font (16.0f, true));
+        g.drawText ("No pedals here - drag some in", boardArea, juce::Justification::centred);
     }
+}
+
+void BoardPage::paintOverChildren (juce::Graphics& g)
+{
+    if (insertIndex < 0)
+        return;
+
+    juce::Rectangle<int> ref;
+    int x;
+    if (cells.isEmpty())                 { ref = boardArea.withSizeKeepingCentre (8, 300); x = boardArea.getCentreX(); }
+    else if (insertIndex < cells.size()) { ref = cells[insertIndex]; x = ref.getX() - 7; }
+    else                                 { ref = cells.getLast(); x = ref.getRight() + 7; }
+
+    g.setColour (colours::accent.withAlpha (0.25f));
+    g.fillRoundedRectangle ((float) x - 9.0f, (float) ref.getY(), 18.0f, (float) ref.getHeight(), 6.0f);
+    g.setColour (colours::accent);
+    g.fillRoundedRectangle ((float) x - 2.5f, (float) ref.getY(), 5.0f, (float) ref.getHeight(), 2.5f);
+}
+
+int BoardPage::insertionIndexFor (juce::Point<int> pos) const
+{
+    for (int i = 0; i < cells.size(); ++i)
+        if (pos.y < cells[i].getBottom() && pos.x < cells[i].getCentreX())
+            return i;
+    return cells.size();
+}
+
+bool BoardPage::isInterestedInDragSource (const SourceDetails& d)
+{
+    return d.description.toString().startsWith ("fx:");
+}
+
+void BoardPage::itemDragMove (const SourceDetails& d)
+{
+    const int idx = insertionIndexFor (d.localPosition);
+    if (idx != insertIndex) { insertIndex = idx; repaint(); }
+}
+
+void BoardPage::itemDropped (const SourceDetails& d)
+{
+    const int id = d.description.toString().fromFirstOccurrenceOf ("fx:", false, false).getIntValue();
+    int idx = insertionIndexFor (d.localPosition);
+    insertIndex = -1;
+
+    // Removing the pedal from its old slot shifts everything after it.
+    const int cur = items.indexOf (id);
+    if (cur >= 0 && cur < idx) --idx;
+
+    auto order = proc.getChainOrder();
+    order.moveTo (id, preAmp, idx);
+    proc.setChainOrder (order);
+    rebuild();
 }
 
 //==============================================================================
@@ -356,6 +539,20 @@ void AmpPage::paint (juce::Graphics& g)
 //==============================================================================
 // Cabinet
 //==============================================================================
+void CabView::timerCallback()
+{
+    float now[4];
+    for (int s = 0; s < 2; ++s)
+    {
+        now[s * 2]     = proc.apvts.getRawParameterValue (ids::cab (s, "mic"))->load();
+        now[s * 2 + 1] = proc.apvts.getRawParameterValue (ids::cab (s, "on"))->load();
+    }
+    if (std::equal (now, now + 4, lastState))
+        return;
+    std::copy (now, now + 4, lastState);
+    repaint();
+}
+
 CabView::CabView (AbyssalProcessor& p) : proc (p)
 {
     startTimerHz (15);
@@ -794,76 +991,69 @@ void EQPage::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-// Post FX
-//==============================================================================
-PostFXPage::PostFXPage (AbyssalProcessor& p)
-    : proc (p),
-      chorus  (p.apvts, "Chorus",  ids::choOn, juce::Colour (0xff17508f), juce::Colour (0xff7cc4ff)),
-      flanger (p.apvts, "Flanger", ids::flOn,  juce::Colour (0xff5c1f86), juce::Colour (0xffe08cff)),
-      delay   (p.apvts, "Delay",   ids::dlyOn, juce::Colour (0xff353c45), colours::amber),
-      reverb  (p.apvts, "Reverb",  ids::revOn, juce::Colour (0xff0c4a43), juce::Colour (0xff5ef2d6))
-{
-    chorus.addKnob (ids::choRate, "Rate");
-    chorus.addKnob (ids::choDepth, "Depth");
-    chorus.addKnob (ids::choMix, "Mix");
-
-    flanger.addKnob (ids::flRate, "Rate");
-    flanger.addKnob (ids::flDepth, "Depth");
-    flanger.addKnob (ids::flFeedback, "Feedback", true);
-    flanger.addKnob (ids::flMix, "Mix");
-
-    delayTime = &delay.addKnob (ids::dlyTime, "Time");
-    delay.addKnob (ids::dlyFeedback, "Feedback");
-    delay.addKnob (ids::dlyTone, "Tone");
-    delay.addKnob (ids::dlyMix, "Mix");
-    delay.addToggle (ids::dlySync, "SYNC");
-    delay.addChoice (ids::dlyDiv);
-    delay.addToggle (ids::dlyPing, "PING");
-
-    reverb.setKnobsPerRow (3);
-    reverb.addKnob (ids::revSize, "Size");
-    reverb.addKnob (ids::revDamp, "Damping");
-    reverb.addKnob (ids::revPredelay, "Pre-Delay");
-    reverb.addKnob (ids::revWidth, "Width");
-    reverb.addKnob (ids::revMix, "Mix");
-
-    for (auto* c : { &chorus, &flanger, &delay, &reverb })
-        addAndMakeVisible (c);
-    startTimerHz (5);
-}
-
-void PostFXPage::timerCallback()
-{
-    const bool sync = proc.apvts.getRawParameterValue (ids::dlySync)->load() > 0.5f;
-    if (delayTime != nullptr && delayTime->isEnabled() == sync)
-        delayTime->setEnabled (! sync);
-}
-
-void PostFXPage::resized()
-{
-    auto r = getLocalBounds().reduced (30, 24);
-    const int gap = 22;
-    const int w = (r.getWidth() - gap * 3) / 4;
-    r = r.withSizeKeepingCentre (r.getWidth(), std::min (r.getHeight(), 470));
-    for (auto* pd : { &chorus, &flanger, &delay, &reverb })
-    {
-        pd->setBounds (r.removeFromLeft (w));
-        r.removeFromLeft (gap);
-    }
-}
-
-void PostFXPage::paint (juce::Graphics& g)
-{
-    fillPageBackground (g, getLocalBounds());
-    g.setColour (juce::Colours::black.withAlpha (0.35f));
-    for (int y = 50; y < getHeight() - 10; y += 52)
-        g.fillRect (16, y, getWidth() - 32, 20);
-}
-
-//==============================================================================
 // ChainBar
 //==============================================================================
 ChainBar::ChainBar (AbyssalProcessor& p) : proc (p) { startTimerHz (6); }
+
+void ChainBar::timerCallback()
+{
+    juce::StringArray now;
+    for (int i = 0; i < numBlocks; ++i)
+    {
+        bool lit = false;
+        now.add (statusFor (i, lit) + (lit ? "1" : "0"));
+    }
+    if (now != lastStatus)
+    {
+        lastStatus = now;
+        repaint();
+    }
+}
+
+int ChainBar::blockAt (juce::Point<float> p) const
+{
+    for (int i = 0; i < numBlocks; ++i)
+        if (blockBounds (i).contains (p)) return i;
+    return -1;
+}
+
+bool ChainBar::isInterestedInDragSource (const SourceDetails& d)
+{
+    return d.description.toString().startsWith ("fx:");
+}
+
+void ChainBar::itemDragMove (const SourceDetails& d)
+{
+    const int b = blockAt (d.localPosition.toFloat());
+    const int target = (b == 0 || b == numBlocks - 1) ? b : -1;
+    if (target != dragHover)
+    {
+        dragHover = target;
+        dragHoverStart = juce::Time::getMillisecondCounter();
+        repaint();
+    }
+    // Hovering over a pedal block opens that board so the pedal can be dropped precisely.
+    else if (dragHover >= 0 && dragHover != selected && juce::Time::getMillisecondCounter() - dragHoverStart > 550)
+    {
+        setSelected (dragHover);
+        if (onSelect) onSelect (dragHover);
+    }
+}
+
+void ChainBar::itemDropped (const SourceDetails& d)
+{
+    const int b = blockAt (d.localPosition.toFloat());
+    dragHover = -1;
+    repaint();
+    if (b != 0 && b != numBlocks - 1)
+        return;
+
+    const int id = d.description.toString().fromFirstOccurrenceOf ("fx:", false, false).getIntValue();
+    auto order = proc.getChainOrder();
+    order.moveTo (id, b == 0, -1);
+    proc.setChainOrder (order);
+}
+
 
 juce::Rectangle<float> ChainBar::blockBounds (int i) const
 {
@@ -878,17 +1068,20 @@ juce::String ChainBar::statusFor (int i, bool& lit) const
     auto on = [this] (const juce::String& id) { return proc.apvts.getRawParameterValue (id)->load() > 0.5f; };
     juce::StringArray active;
 
+    static const juce::String onIds[] = { ids::gateOn, ids::octOn, ids::dropOn, ids::compOn, ids::odOn, ids::geqOn,
+                                          ids::choOn, ids::flOn, ids::dlyOn, ids::revOn };
+    auto sectionStatus = [&] (bool pre)
+    {
+        for (int id : proc.getChainOrder().section (pre))
+            if (on (onIds[id])) active.add (fxShortName (id));
+        lit = ! active.isEmpty();
+        return lit ? active.joinIntoString (" > ") : juce::String ("ALL BYPASSED");
+    };
+
     switch (i)
     {
         case 0:
-            if (on (ids::gateOn)) active.add ("GATE");
-            if (on (ids::octOn))  active.add ("OCT");
-            if (on (ids::dropOn)) active.add ("DROP");
-            if (on (ids::compOn)) active.add ("COMP");
-            if (on (ids::odOn))   active.add ("OD");
-            if (on (ids::geqOn))  active.add ("GEQ");
-            lit = ! active.isEmpty();
-            return lit ? active.joinIntoString (" / ") : "ALL BYPASSED";
+            return sectionStatus (true);
         case 1:
         {
             lit = true;
@@ -917,12 +1110,7 @@ juce::String ChainBar::statusFor (int i, bool& lit) const
                              + juce::String (proc.apvts.getRawParameterValue (ids::peqLpf)->load() / 1000.0f, 1) + " kHz"
                        : "BYPASSED";
         default:
-            if (on (ids::choOn)) active.add ("CHORUS");
-            if (on (ids::flOn))  active.add ("FLANGER");
-            if (on (ids::dlyOn)) active.add ("DELAY");
-            if (on (ids::revOn)) active.add ("REVERB");
-            lit = ! active.isEmpty();
-            return lit ? active.joinIntoString (" / ") : "ALL BYPASSED";
+            return sectionStatus (false);
     }
 }
 
@@ -952,9 +1140,9 @@ void ChainBar::paint (juce::Graphics& g)
         const auto status = statusFor (i, lit);
         const bool sel = i == selected;
 
-        if (sel)
+        if (sel || i == dragHover)
         {
-            g.setColour (colours::accent.withAlpha (0.18f));
+            g.setColour (colours::accent.withAlpha (i == dragHover ? 0.4f : 0.18f));
             g.fillRoundedRectangle (b.expanded (4.0f), 12.0f);
         }
         g.setGradientFill (juce::ColourGradient (sel ? juce::Colour (0xff2a2228) : colours::panelHi, 0, b.getY(),
@@ -978,12 +1166,12 @@ void ChainBar::paint (juce::Graphics& g)
 
 void ChainBar::mouseDown (const juce::MouseEvent& e)
 {
-    for (int i = 0; i < numBlocks; ++i)
-        if (blockBounds (i).contains (e.position))
-        {
-            setSelected (i);
-            if (onSelect) onSelect (i);
-        }
+    const int i = blockAt (e.position);
+    if (i >= 0)
+    {
+        setSelected (i);
+        if (onSelect) onSelect (i);
+    }
 }
 
 void ChainBar::mouseMove (const juce::MouseEvent& e)

@@ -130,14 +130,18 @@ int main (int argc, char** argv)
     ParamCache cache (proc.apvts);
     int failures = 0;
 
-    auto runPreset = [&] (const FactoryPreset& preset, bool useNam, int index)
+    auto runPreset = [&] (const FactoryPreset& preset, bool useNam, int index,
+                          const juce::String& orderOverride = {}, bool monoOut = false, const juce::String& label = {})
     {
         applyFactoryPreset (proc.apvts, preset);
         EngineParams params;
         cache.fill (params);
         params.bpm = 160.0;
+        params.monoOut = monoOut;
 
         auto engine = std::make_unique<Engine>();
+        engine->setChainOrder (orderOverride.isNotEmpty() ? ChainOrder::fromString (orderOverride)
+                               : preset.chain.isEmpty() ? ChainOrder::defaultOrder() : ChainOrder::fromString (preset.chain));
         engine->prepare (sr, block);
         for (int s = 0; s < 2; ++s)
             engine->getCabinet().setSource (s, params.cab.slot[s].source);
@@ -181,7 +185,7 @@ int main (int argc, char** argv)
         const double rms = std::sqrt (sumSq / (2.0 * len));
         const double audioMs = 1000.0 * len / sr;
 
-        juce::String name = (useNam ? "NAM - " : "") + preset.name;
+        juce::String name = label.isNotEmpty() ? label : (useNam ? "NAM - " : "") + preset.name;
         std::cout << juce::String (name).paddedRight (' ', 24)
                   << " peak " << juce::String (juce::Decibels::gainToDecibels (pk), 1).paddedLeft (' ', 6) << " dBFS"
                   << "  rms " << juce::String (juce::Decibels::gainToDecibels ((float) rms), 1).paddedLeft (' ', 6) << " dBFS"
@@ -199,6 +203,15 @@ int main (int argc, char** argv)
         runPreset (p, false, idx++);
     if (namPath.isNotEmpty())
         runPreset (getFactoryPresets()[1], true, idx++);
+
+    // Chain-order stress tests: every pedal enabled, mono pedals post-amp and stereo FX pre-amp.
+    FactoryPreset everything { "Everything On", "Test", {},
+        { { ids::gateOn, 1 }, { ids::octOn, 1 }, { ids::dropOn, 1 }, { ids::compOn, 1 }, { ids::odOn, 1 }, { ids::geqOn, 1 },
+          { ids::choOn, 1 }, { ids::flOn, 1 }, { ids::dlyOn, 1 }, { ids::revOn, 1 } } };
+    runPreset (everything, false, idx++, "", false, "All on - default order");
+    runPreset (everything, false, idx++, "cho,fl,dly,rev,amp,gate,oct,drop,comp,od,geq", false, "All on - swapped sides");
+    runPreset (everything, false, idx++, "amp,gate,oct,drop,comp,od,geq,cho,fl,dly,rev", false, "All on - all post-amp");
+    runPreset (getFactoryPresets()[1], false, idx++, "", true, "Mono output");
 
     std::cout << (failures == 0 ? "OK" : "FAILURES: " + juce::String (failures)) << "\n";
     return failures == 0 ? 0 : 1;

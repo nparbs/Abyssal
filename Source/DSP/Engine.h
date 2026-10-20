@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.h"
+#include "Chain.h"
 #include "Pedals.h"
 #include "AmpModel.h"
 #include "NamAmp.h"
@@ -14,6 +15,9 @@ namespace abyssal
 struct EngineParams
 {
     float inGainDb = 0, outGainDb = 0;
+    int   inputMode = 0;      // 0 = left, 1 = right, 2 = mono sum
+    bool  monoOut = false;
+    bool  bypass = false;
 
     GateParams      gate;
     OctaverParams   octaver;
@@ -32,7 +36,9 @@ struct EngineParams
     double          bpm = 120.0;
 };
 
-/** The complete signal chain. Mono up to the cabinet, stereo afterwards. */
+/** The complete signal chain. Pedals before the amp run in mono; after the cab everything is
+    stereo. Mono pedals keep a second instance for the right channel when placed post-amp, and
+    stereo effects placed pre-amp are summed back to mono. */
 class Engine
 {
 public:
@@ -41,6 +47,9 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void reset();
     void process (juce::AudioBuffer<float>& buffer, const EngineParams& p);
+
+    /** Message-thread safe: takes effect at the next block. */
+    void setChainOrder (const ChainOrder& order) noexcept { packedOrder = order.pack(); }
 
     int getLatencySamples() const noexcept { return amp.getLatencySamples(); }
 
@@ -51,20 +60,31 @@ public:
 
     /** Peak meters (linear) read by the UI. */
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, gateGainReduction { 0.0f };
+    /** Output peak of the most recent block (audio thread only). */
+    float lastBlockPeak = 0.0f;
 
 private:
+    void processChunk (float* const* channels, int numChannels, int n, const EngineParams& p);
+    void processAmpBlock (int n, const EngineParams& p);
+    void processPedalMono (int id, int n, const EngineParams& p);
+    void processPedalStereo (int id, int n, const EngineParams& p);
+    void resetPedal (int id);
+
+    template <typename Fn, typename ResetFn>
+    void runRamp (BypassRamp& ramp, bool on, int n, float* a, float* b, Fn&& processFn, ResetFn&& resetFn);
+
     double sr = 48000.0;
     int maxBlock = 512;
 
-    juce::AudioBuffer<float> mono, dryScratch, namScratch, work, stereoDry;
+    juce::AudioBuffer<float> mono, dry, namScratch, work, fxTmp, bypassDry;
     juce::SmoothedValue<float> inGain, outGain;
 
-    NoiseGate  gate;
-    Octaver    octaver;
-    DropTune   drop;
-    Compressor comp;
-    Overdrive  od;
-    GraphicEQ  geq;
+    NoiseGate  gate[2];
+    Octaver    octaver[2];
+    DropTune   drop[2];
+    Compressor comp[2];
+    Overdrive  od[2];
+    GraphicEQ  geq[2];
     AmpModel   amp;
     NamAmp     nam;
     Cabinet    cab;
@@ -73,17 +93,15 @@ private:
     StereoDelay delay;
     Reverb     reverb;
 
-    BypassRamp gateRamp, octRamp, dropRamp, compRamp, odRamp, geqRamp,
-               peqRamp, chorusRamp, flangerRamp, delayRamp, reverbRamp;
+    BypassRamp ramps[numFx], peqRamp, bypassRamp;
     juce::SmoothedValue<float> namMix; // crossfade between DSP amp and NAM capture
 
-    template <typename Module, typename Params>
-    void runMono (Module& m, BypassRamp& ramp, bool on, const Params& params, int n);
+    std::atomic<juce::uint64> packedOrder { ChainOrder::defaultOrder().pack() };
+    juce::uint64 activeOrder = 0;
 
-    template <typename Fn, typename ResetFn>
-    void runStereo (BypassRamp& ramp, bool on, int n, Fn&& process, ResetFn&& resetFn);
-
-    void processChunk (float* const* channels, int numChannels, int n, const EngineParams& p);
+    // Delays the dry signal by the plugin latency so host bypass stays phase-aligned.
+    std::vector<float> latencyLine[2];
+    int latencyWrite = 0;
 };
 
 } // namespace abyssal

@@ -49,19 +49,38 @@
 - [x] Save/load user presets (`Documents\Abyssal\Presets\*.abyssal`)
 - [x] Session state remembers NAM and IR file paths
 
+## Done — v0.2 (October 2026)
+
+- [x] Input selector (Left / Right / Mono Sum) and Stereo / Mono output mode
+- [x] Rearrangeable chain: any pedal before or after the amp, by drag-and-drop or right-click menu;
+      mono pedals run per channel post-amp, stereo FX fold to mono pre-amp; order saved in presets
+- [x] Preset browser: categories, search, favourites (shared across instances), arrow-key audition,
+      prev/next within the current filter
+- [x] 15 level-matched core metal factory presets (Djent, Metalcore, Thrash, Death, Black, Doom, Nu Metal,
+      Lead, Clean); some use custom pedal orders (e.g. EQ into a cranked OD, post-amp octaver)
+- [x] Host bypass parameter with a latency-aligned dry crossfade
+- [x] Idle detection: no processing on silent tracks once tails have decayed
+- [x] Resizable / scalable UI (60–200%), remembered per project and as the default
+- [x] Program-change guard so project recall in FL Studio / Reaper never resets the sound
+- [x] Setup parameters (routing, input gain, bypass) kept when loading presets
+- [x] Lighter UI repainting (cab view and chain bar repaint only on change)
+- [x] Render tool: chain-order stress tests (all pedals on, sides swapped, all post-amp) and mono output
+
 ---
 
-## Next — v0.2: playability
+## Next — v0.3: playability
 - [ ] **Tune by ear with a real guitar.** The voicings were set by measurement only.
 - [ ] Separate knob settings for each amp channel (currently shared)
 - [ ] Built-in tuner (with output mute)
 - [ ] Gate key options: detect from the input, apply after the amp
 - [ ] Input level calibration for NAM captures (match interface headroom)
 - [ ] Report the extra latency from the NAM resampler and pitch effects to the host
-- [ ] Resizable / scalable UI (100–200%)
+- [ ] Preset save dialog with name / category / notes; rename and delete from the browser
+- [ ] A/B compare snapshots
+- [ ] Load NAM captures on a background thread (large models briefly freeze the UI today)
 - [ ] Undo/redo for parameter changes
 
-## v0.3: tone depth
+## v0.4: tone depth
 - [ ] Fourth amp voicing: a tight, saturated modern lead ("Abyss" channel)
 - [ ] Passive tone stack with interacting controls, replacing the independent biquads
 - [ ] Power amp voicing switch (EL34 / 6L6 style)
@@ -70,17 +89,16 @@
 - [ ] IR time alignment between the two cab slots (phase)
 - [ ] Optional tone controls after a NAM capture
 
-## v0.4: more FX
+## v0.5: more FX
 - [ ] Phaser, tremolo, wah (auto and expression)
 - [ ] Pitch-shift whammy pedal
 - [ ] Shimmer and plate reverb modes
 - [ ] Tape and analog delay modes, plus tap tempo
-- [ ] Reorderable pedals (drag on the board)
 - [ ] Doubler for stereo width on rhythm parts
 
 ## v1.0: release
 - [ ] MIDI control: program change, CC learn for footswitches
-- [ ] Preset browser with tags, favourites and search
+- [ ] Preset tags (multiple per preset) and user-defined categories
 - [ ] Installer (VST3 path copy) and code signing
 - [ ] AU / CLAP formats; macOS build in CI
 - [ ] GitHub Actions: build plus `AbyssalRender` regression check on every push

@@ -94,7 +94,8 @@ private:
 };
 
 //============================================================================== Pedal
-/** A stompbox enclosure: knobs on top, optional mini controls, footswitch at the bottom. */
+/** A stompbox enclosure: knobs on top, optional mini controls, footswitch at the bottom.
+    Dragging the enclosure starts a drag-and-drop ("fx:<id>") so it can be rearranged. */
 class Pedal : public juce::Component
 {
 public:
@@ -106,8 +107,17 @@ public:
     void setKnobsPerRow (int n) { knobsPerRow = n; }
     void setBodyArea (std::function<void (juce::Rectangle<int>)> layoutFn) { customLayout = std::move (layoutFn); }
 
+    void setFxId (int id) noexcept { fxId = id; }
+    int  getFxId() const noexcept  { return fxId; }
+    /** Relative width on the pedalboard (the graphic EQ is double-width). */
+    virtual int getWidthUnits() const { return 1; }
+    std::function<void (Pedal&)> onContextMenu;
+
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
 
     juce::Rectangle<int> getContentArea() const;
 
@@ -119,8 +129,34 @@ protected:
     juce::OwnedArray<Knob> knobs;
     juce::OwnedArray<juce::Component> minis;
     int knobsPerRow = 2;
+    int fxId = -1;
+    bool dragStarted = false;
     std::function<void (juce::Rectangle<int>)> customLayout;
     juce::RangedAudioParameter* onParam = nullptr;
+};
+
+/** Double-width pedal with nine band faders and a level fader. */
+class GraphicEQPedal : public Pedal
+{
+public:
+    GraphicEQPedal (APVTS& state, const juce::String& onParam, const juce::StringArray& bandParams,
+                    const juce::StringArray& bandLabels, const juce::String& levelParam);
+    int getWidthUnits() const override { return 2; }
+
+private:
+    juce::OwnedArray<Fader> faders;
+};
+
+/** Delay pedal: greys out the Time knob while tempo sync is on. */
+class DelayPedal : public Pedal, private juce::Timer
+{
+public:
+    DelayPedal (APVTS& state, const juce::String& onParam, const juce::String& syncParam, juce::Colour body, juce::Colour accent);
+    Knob* timeKnob = nullptr;
+
+private:
+    void timerCallback() override;
+    std::atomic<float>* sync = nullptr;
 };
 
 //============================================================================== Meter

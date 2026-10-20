@@ -13,6 +13,14 @@ IN → Noise Gate → Octaver → Drop Tune → Compressor → Overdrive → Gra
 
 Everything up to the cab is mono; the cab slots' pan controls make it stereo.
 
+**Rearranging:** every pedal can go before or after the amp, in any order. Drag a pedal on its board to
+reorder it; drop it on **PRE FX** / **POST FX** in the chain bar to move it across the amp (hover there to
+switch boards); or right-click a pedal. Mono pedals placed after the amp run per channel in stereo;
+stereo effects placed before the amp are folded to mono. The order is saved with sessions and presets.
+
+**Routing:** the header has an input selector (Left / Right / Mono Sum, for whichever interface input
+carries your guitar) and an output mode (Stereo, or Mono for double-tracked hard-panned takes).
+
 | Section | What's in it |
 |---|---|
 | **Pre FX** | Noise gate (hysteresis + hold), sub-octave (-1/-2), drop tune (±12 st), compressor, TS-style overdrive for tightening, 9-band graphic EQ |
@@ -51,8 +59,27 @@ It prints peak/RMS/CPU per preset and fails if any preset produces NaNs or silen
 
 ## Presets
 
-Factory presets are in the preset menu (and exposed to the host as programs). **Save** writes
-`.abyssal` files to `Documents\Abyssal\Presets\`. Presets remember the NAM capture and IR file paths.
+Click the preset name to open the browser: filter by category, search, and star favourites. Clicking or
+arrowing through the list auditions presets immediately; `<` / `>` step through the current filter.
+15 factory presets are level-matched (about -17.5 dBFS RMS) and also exposed to the host as programs.
+**Save** writes `.abyssal` files to `Documents\Abyssal\Presets\`; they show up under **User**.
+Presets remember the pedal order and the NAM capture / IR file paths. Presets never change the input
+selector, input gain, output mode or bypass. Favourites are shared by every instance (stored in
+`%APPDATA%\Abyssal\Abyssal.settings`).
+
+## Using it in FL Studio and Reaper
+
+- **Bypass:** the host's bypass button crossfades to the dry signal, delayed to match the plugin's latency.
+- **Idle CPU:** with silent input, once the delay/reverb tails die out (below -100 dBFS for about 2.6 s),
+  the plugin stops processing until signal returns. It plays nicely with FL's Smart Disable and Reaper's
+  auto-bypass on silence.
+- **Resizable UI:** drag the window corner (60%–200%). New instances open at the last size you used.
+- **Project recall:** the host's program number is ignored when it's already the current one, so reopening
+  a project never resets your sound to a factory preset.
+- **FL Studio:** mixer inserts are stereo. If your guitar is on interface input 1 only, leave the input
+  selector on **Left**. If FL feeds the same signal to both sides, any setting works.
+- **Reaper:** for a mono-recorded guitar on a stereo track, leave the input on **Left** (or **Mono Sum**).
+  Use output **Mono** and pan two takes hard left and right for a classic double-tracked rhythm.
 
 ## Where to get captures and IRs
 

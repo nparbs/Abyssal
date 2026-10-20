@@ -73,11 +73,13 @@ target_sources(Abyssal PRIVATE
     ${ABYSSAL_DSP_SOURCES}
     Source/Parameters.cpp
     Source/Presets.cpp
+    Source/PresetManager.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/GUI/LookAndFeel.cpp
     Source/GUI/Widgets.cpp
-    Source/GUI/Pages.cpp)
+    Source/GUI/Pages.cpp
+    Source/GUI/PresetBrowser.cpp)
 
 target_include_directories(Abyssal PRIVATE Source)
 target_compile_definitions(Abyssal PUBLIC ${ABYSSAL_COMMON_DEFS})
