@@ -4,6 +4,7 @@
 #include "Parameters.h"
 #include "Presets.h"
 #include "PresetManager.h"
+#include "FileLibrary.h"
 
 class AbyssalProcessor : public juce::AudioProcessor,
                          private juce::Timer
@@ -50,6 +51,17 @@ public:
 
     juce::String loadUserIR (int slot, const juce::File& file);
     juce::File getUserIR (int slot) const { return engine.getCabinetConst().getUserIR (slot); }
+    void selectBuiltInCab (int slot, int builtIn);
+
+    // Libraries (Documents/Abyssal/IRs and /NAM). Loaded files are copied in so they stay in the
+    // dropdowns; whole folders can be imported.
+    static const abyssal::FileLibrary& irLibrary();
+    static const abyssal::FileLibrary& namLibrary();
+    juce::String importIRFolder (int slot, const juce::File& folder);
+    juce::String importNamFolder (const juce::File& folder);
+    bool removeFromIRLibrary (const juce::File& file);
+    bool removeFromNamLibrary (const juce::File& file);
+    juce::File lastIRBrowseDirectory, lastNamBrowseDirectory;
 
     // presets
     juce::String savePreset (const juce::File& file);

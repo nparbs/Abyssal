@@ -93,6 +93,8 @@ target_sources(Abyssal PRIVATE
     Source/Parameters.cpp
     Source/Presets.cpp
     Source/PresetManager.cpp
+    Source/FileLibrary.cpp
+    Source/GUI/LibrarySelector.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/GUI/LookAndFeel.cpp
@@ -125,7 +127,7 @@ target_link_libraries(Abyssal
 # ---------------------------------------------------------------- offline render / test tool
 # Renders a synthetic riff through every factory preset to WAV and checks for NaNs / clipping.
 juce_add_console_app(AbyssalRender PRODUCT_NAME "AbyssalRender")
-target_sources(AbyssalRender PRIVATE Tools/Render.cpp Source/Presets.cpp Source/Parameters.cpp ${ABYSSAL_DSP_SOURCES})
+target_sources(AbyssalRender PRIVATE Tools/Render.cpp Source/Presets.cpp Source/Parameters.cpp Source/FileLibrary.cpp ${ABYSSAL_DSP_SOURCES})
 target_include_directories(AbyssalRender PRIVATE Source)
 target_compile_definitions(AbyssalRender PRIVATE ${ABYSSAL_COMMON_DEFS} ABYSSAL_RENDER_TOOL=1)
 target_link_libraries(AbyssalRender

@@ -1,5 +1,6 @@
 #include "Pages.h"
 #include "../PluginProcessor.h"
+#include <map>
 
 namespace abyssal::ui
 {
@@ -294,6 +295,61 @@ void BoardPage::itemDropped (const SourceDetails& d)
 }
 
 //==============================================================================
+// Library dropdown configs
+//==============================================================================
+namespace
+{
+    LibrarySelector::Config namConfig (AbyssalProcessor& p)
+    {
+        LibrarySelector::Config c;
+        c.library = &AbyssalProcessor::namLibrary();
+        c.kind = "capture";
+        c.currentFile = [&p] { return p.hasNamModel() ? p.getNamFile() : juce::File(); };
+        c.displayText = [&p] { return p.hasNamModel() ? p.getNamFile().getFileNameWithoutExtension() : juce::String ("No capture loaded"); };
+        c.loadFile = [&p] (const juce::File& f) { return p.loadNamModel (f); };
+        c.importFolder = [&p] (const juce::File& f) { return p.importNamFolder (f); };
+        c.removeFile = [&p] (const juce::File& f) { return p.removeFromNamLibrary (f); };
+        c.browseStart = [&p] { return p.lastNamBrowseDirectory; };
+        c.addBottomItems = [&p] (juce::PopupMenu& m) { if (p.hasNamModel()) m.addItem (200, "Unload capture"); };
+        c.handleExtraItem = [&p] (int id) { if (id == 200) p.unloadNamModel(); };
+        return c;
+    }
+
+    LibrarySelector::Config irConfig (AbyssalProcessor& p, int slot)
+    {
+        auto src = [&p, slot] { return (int) p.apvts.getRawParameterValue (ids::cab (slot, "src"))->load(); };
+
+        LibrarySelector::Config c;
+        c.library = &AbyssalProcessor::irLibrary();
+        c.kind = "IR";
+        c.currentFile = [&p, slot, src] { return src() == Cabinet::userSource ? p.getUserIR (slot) : juce::File(); };
+        c.displayText = [&p, slot, src]
+        {
+            const int s = src();
+            if (s < Cabinet::numBuiltIns) return Cabinet::getSourceNames()[s];
+            return p.getUserIR (slot).existsAsFile() ? p.getUserIR (slot).getFileNameWithoutExtension()
+                                                     : juce::String ("User IR (none loaded)");
+        };
+        c.loadFile = [&p, slot] (const juce::File& f) { return p.loadUserIR (slot, f); };
+        c.importFolder = [&p, slot] (const juce::File& f) { return p.importIRFolder (slot, f); };
+        c.removeFile = [&p] (const juce::File& f) { return p.removeFromIRLibrary (f); };
+        c.browseStart = [&p] { return p.lastIRBrowseDirectory; };
+        c.addTopItems = [src] (juce::PopupMenu& m)
+        {
+            m.addSectionHeader ("BUILT-IN CABS");
+            const auto names = Cabinet::getSourceNames();
+            for (int i = 0; i < Cabinet::numBuiltIns; ++i)
+                m.addItem (1 + i, names[i], true, src() == i);
+        };
+        c.handleExtraItem = [&p, slot] (int id)
+        {
+            if (id >= 1 && id <= Cabinet::numBuiltIns) p.selectBuiltInCab (slot, id - 1);
+        };
+        return c;
+    }
+}
+
+//==============================================================================
 // AmpPage
 //==============================================================================
 AmpPage::AmpPage (AbyssalProcessor& p)
@@ -310,33 +366,20 @@ AmpPage::AmpPage (AbyssalProcessor& p)
       namIn (p.apvts, ids::namIn, "Input", colours::amber, true),
       namOut (p.apvts, ids::namOut, "Output", colours::amber, true),
       bright (p.apvts, ids::ampBright, "BRIGHT"),
-      tight (p.apvts, ids::ampTight, "TIGHT")
+      tight (p.apvts, ids::ampTight, "TIGHT"),
+      capture (namConfig (p))
 {
     for (auto* c : std::initializer_list<juce::Component*> { &channel, &mode, &gain, &bass, &mid, &treble, &presence, &depth,
-                                                             &master, &namIn, &namOut, &bright, &tight, &loadCapture,
-                                                             &unloadCapture, &namName, &namInfo })
+                                                             &master, &namIn, &namOut, &bright, &tight, &capture,
+                                                             &loadCapture, &loadCaptureFolder, &unloadCapture, &namInfo })
         addAndMakeVisible (c);
 
-    namName.setFont (font (16.0f, true));
-    namName.setColour (juce::Label::textColourId, colours::text);
     namInfo.setFont (font (13.0f));
     namInfo.setColour (juce::Label::textColourId, colours::textDim);
 
-    loadCapture.onClick = [this]
-    {
-        auto start = proc.getNamFile().existsAsFile() ? proc.getNamFile().getParentDirectory()
-                                                       : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
-        chooser = std::make_unique<juce::FileChooser> ("Load a Neural Amp Modeler capture", start, "*.nam");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                              [this] (const juce::FileChooser& fc)
-        {
-            const auto f = fc.getResult();
-            if (f == juce::File()) return;
-            const auto err = proc.loadNamModel (f);
-            if (err.isNotEmpty()) showError ("NAM capture", err);
-            refreshNamLabel();
-        });
-    };
+    loadCapture.onClick = [this] { capture.browseForFile(); };
+    loadCaptureFolder.onClick = [this] { capture.browseForFolder(); };
+    capture.onChange = [this] { refreshNamLabel(); };
     unloadCapture.onClick = [this] { proc.unloadNamModel(); refreshNamLabel(); };
 
     channel.onChange = [this] (int c) { channelChanged (c); };
@@ -351,16 +394,14 @@ void AmpPage::timerCallback() { refreshNamLabel(); }
 
 void AmpPage::refreshNamLabel()
 {
-    juce::String name = "No capture loaded", info = "Load a .nam file to play through a neural capture of a real amp.";
+    juce::String info = "Load a .nam file or a whole folder of captures to play through neural captures of real amps.";
     if (proc.hasNamModel())
     {
-        name = proc.getNamFile().getFileNameWithoutExtension();
         const double mr = proc.getNamSampleRate(), hr = proc.getCurrentSampleRate();
         info = "Trained at " + juce::String (mr / 1000.0, 1) + " kHz";
         if (std::abs (mr - hr) > 0.5)
             info << "  -  resampled from the host's " << juce::String (hr / 1000.0, 1) << " kHz";
     }
-    if (namName.getText() != name) namName.setText (name, juce::dontSendNotification);
     if (namInfo.getText() != info) namInfo.setText (info, juce::dontSendNotification);
     unloadCapture.setEnabled (proc.hasNamModel());
 }
@@ -422,15 +463,20 @@ void AmpPage::resized()
     namOut.setBounds (knobsArea.reduced (8, 0));
 
     mp.removeFromTop (24); // title
-    auto row = mp.removeFromTop (36);
-    mode.setBounds (row.removeFromLeft (330));
-    row.removeFromLeft (20);
-    loadCapture.setBounds (row.removeFromLeft (200));
-    row.removeFromLeft (8);
-    unloadCapture.setBounds (row.removeFromLeft (90));
+    auto row = mp.removeFromTop (34);
+    mode.setBounds (row.removeFromLeft (300));
+    row.removeFromLeft (16);
+    capture.setBounds (row.removeFromLeft (std::min (row.getWidth(), 460)));
     mp.removeFromTop (8);
-    namName.setBounds (mp.removeFromTop (24));
-    namInfo.setBounds (mp.removeFromTop (22));
+    row = mp.removeFromTop (30);
+    row.removeFromLeft (316);
+    loadCapture.setBounds (row.removeFromLeft (130));
+    row.removeFromLeft (6);
+    loadCaptureFolder.setBounds (row.removeFromLeft (140));
+    row.removeFromLeft (6);
+    unloadCapture.setBounds (row.removeFromLeft (90));
+    mp.removeFromTop (6);
+    namInfo.setBounds (mp.removeFromTop (22).withTrimmedLeft (316));
 }
 
 void AmpPage::paint (juce::Graphics& g)
@@ -666,46 +712,37 @@ CabSlotPanel::CabSlotPanel (AbyssalProcessor& p, int s)
     : proc (p), slot (s),
       accent (s == 0 ? colours::accent : colours::accentAlt),
       onToggle (p.apvts, ids::cab (s, "on"), s == 0 ? "MIC A" : "MIC B", s == 0 ? colours::accent : colours::accentAlt),
-      source (p.apvts, ids::cab (s, "src")),
+      source (irConfig (p, s)),
       level (p.apvts, ids::cab (s, "level"), "Level", s == 0 ? colours::accent : colours::accentAlt),
       pan (p.apvts, ids::cab (s, "pan"), "Pan", s == 0 ? colours::accent : colours::accentAlt, true),
       mic (p.apvts, ids::cab (s, "mic"), "Mic Pos", s == 0 ? colours::accent : colours::accentAlt)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &source, &loadIR, &fileLabel, &level, &pan, &mic })
+    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &source, &loadIR, &loadFolder, &fileLabel, &level, &pan, &mic })
         addAndMakeVisible (c);
 
     fileLabel.setFont (font (13.0f));
     fileLabel.setColour (juce::Label::textColourId, colours::textDim);
 
-    loadIR.onClick = [this]
-    {
-        auto start = proc.getUserIR (slot).existsAsFile() ? proc.getUserIR (slot).getParentDirectory()
-                                                           : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
-        chooser = std::make_unique<juce::FileChooser> ("Load a cabinet impulse response", start, "*.wav;*.aif;*.aiff;*.flac");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                              [this] (const juce::FileChooser& fc)
-        {
-            const auto f = fc.getResult();
-            if (f == juce::File()) return;
-            const auto err = proc.loadUserIR (slot, f);
-            if (err.isNotEmpty()) showError ("Impulse response", err);
-            refreshFileLabel();
-        });
-    };
+    loadIR.onClick = [this] { source.browseForFile(); };
+    loadFolder.onClick = [this] { source.browseForFolder(); };
+    source.onChange = [this] { refreshFileLabel(); };
     refreshFileLabel();
 }
 
 void CabSlotPanel::refreshFileLabel()
 {
     const int src = (int) proc.apvts.getRawParameterValue (ids::cab (slot, "src"))->load();
-    juce::String text;
-    if (src == Cabinet::userSource)
-        text = proc.getUserIR (slot).existsAsFile() ? proc.getUserIR (slot).getFileName()
-                                                    : "No IR file yet - playing the Modern 4x12";
-    else
-        text = "Built-in synthesized cabinet";
+    const auto ir = proc.getUserIR (slot);
+    const auto& lib = AbyssalProcessor::irLibrary();
+    juce::String text, tip;
+    if (src != Cabinet::userSource)    text = "Built-in synthesized cabinet";
+    else if (! ir.existsAsFile())      text = "No IR file yet - playing the Modern 4x12";
+    else if (lib.contains (ir))        text = lib.folderOf (ir).isEmpty() ? "In your IR library" : "Library: " + lib.folderOf (ir);
+    else                               { text = "From " + ir.getParentDirectory().getFileName() + " (not in library)"; tip = ir.getFullPathName(); }
+
     if (fileLabel.getText() != text)
         fileLabel.setText (text, juce::dontSendNotification);
+    fileLabel.setTooltip (tip);
 }
 
 void CabSlotPanel::resized()
@@ -717,7 +754,9 @@ void CabSlotPanel::resized()
     source.setBounds (row);
     r.removeFromTop (8);
     row = r.removeFromTop (30);
-    loadIR.setBounds (row.removeFromLeft (110));
+    loadIR.setBounds (row.removeFromLeft (100));
+    row.removeFromLeft (6);
+    loadFolder.setBounds (row.removeFromLeft (124));
     row.removeFromLeft (10);
     fileLabel.setBounds (row);
     r.removeFromTop (8);

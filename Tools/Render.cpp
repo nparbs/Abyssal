@@ -7,6 +7,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "Parameters.h"
 #include "Presets.h"
+#include "FileLibrary.h"
 #include <iostream>
 
 using namespace abyssal;
@@ -107,9 +108,66 @@ static bool writeWav (const juce::File& f, const juce::AudioBuffer<float>& buf, 
     return w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
 }
 
+/** Exercises FileLibrary against a throwaway library folder (Documents/Abyssal/_selftest). */
+static int libraryTest (const juce::File& namExamples)
+{
+    int fails = 0;
+    auto check = [&] (bool ok, const char* what) { std::cout << (ok ? "  pass  " : "  FAIL  ") << what << std::endl; if (! ok) ++fails; };
+
+    FileLibrary lib ("_selftest", "*.nam");
+    lib.getDirectory().deleteRecursively();
+
+    // A "pack" folder with a nested sub-folder, plus a non-matching file that must be ignored.
+    auto pack = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Abyssal Test Pack");
+    pack.deleteRecursively();
+    pack.getChildFile ("Cleans").createDirectory();
+    auto models = namExamples.findChildFiles (juce::File::findFiles, false, "*.nam");
+    models.sort();
+    check (models.size() >= 3, "example .nam files found");
+    models[0].copyFileTo (pack.getChildFile ("01 " + models[0].getFileName()));
+    models[1].copyFileTo (pack.getChildFile ("02 " + models[1].getFileName()));
+    models[2].copyFileTo (pack.getChildFile ("Cleans").getChildFile (models[2].getFileName()));
+    pack.getChildFile ("readme.txt").replaceWithText ("not a capture");
+
+    const auto imported = lib.importFolder (pack);
+    check (imported.size() == 3, "importFolder copies 3 captures, skips readme.txt");
+    check (lib.list().size() == 3, "list() sees 3 files");
+    check (lib.getDirectory().getChildFile ("Abyssal Test Pack").getChildFile ("Cleans").isDirectory(), "sub-folder structure kept");
+    check (lib.folderOf (imported[0]) == "Abyssal Test Pack", "folderOf() names the pack");
+
+    const auto again = lib.importFolder (pack);
+    check (lib.list().size() == 3, "re-importing the same folder doesn't duplicate");
+
+    const auto single = lib.add (models[0]);
+    check (single.isAChildOf (lib.getDirectory()) && lib.list().size() == 4, "add() copies a loose file into the root");
+    check (lib.add (models[0]) == single && lib.list().size() == 4, "add() of an identical file reuses the copy");
+    check (lib.add (single) == single, "add() of a library file is a no-op");
+
+    const auto first = lib.getDirectory().getChildFile ("Abyssal Test Pack").getChildFile ("01 " + models[0].getFileName());
+    const auto second = lib.getDirectory().getChildFile ("Abyssal Test Pack").getChildFile ("02 " + models[1].getFileName());
+    check (lib.step (first, 1) == second, "step() moves to the next file in the pack");
+    check (lib.step (second, 1) == first, "step() wraps within the pack");
+    check (lib.step (juce::File(), 1).existsAsFile(), "step() from nothing picks a file");
+
+    const auto nested = lib.getDirectory().getChildFile ("Abyssal Test Pack").getChildFile ("Cleans").getChildFile (models[2].getFileName());
+    check (lib.remove (nested) && ! nested.existsAsFile(), "remove() moves the file to the Recycle Bin");
+    check (! nested.getParentDirectory().isDirectory(), "remove() tidies the empty sub-folder");
+    check (! lib.remove (models[0]), "remove() refuses files outside the library");
+    check (models[0].existsAsFile(), "original files are untouched");
+
+    lib.getDirectory().deleteRecursively();
+    pack.deleteRecursively();
+    juce::ignoreUnused (again);
+    std::cout << (fails == 0 ? "LIBRARY OK" : "LIBRARY FAILURES") << std::endl;
+    return fails == 0 ? 0 : 1;
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
+
+    if (argc > 2 && juce::String (argv[1]) == "--libtest")
+        return libraryTest (juce::File (juce::String (argv[2])));
 
     const juce::File outDir (argc > 1 ? juce::String (argv[1]) : juce::File::getCurrentWorkingDirectory().getFullPathName());
     const double sr = argc > 2 ? juce::String (argv[2]).getDoubleValue() : 48000.0;

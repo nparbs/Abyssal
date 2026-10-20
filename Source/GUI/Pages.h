@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Widgets.h"
+#include "LibrarySelector.h"
 #include "../DSP/Chain.h"
 
 class AbyssalProcessor;
@@ -75,9 +76,9 @@ private:
     ChoiceButtons channel, mode;
     Knob gain, bass, mid, treble, presence, depth, master, namIn, namOut;
     MiniToggle bright, tight;
-    juce::TextButton loadCapture { "LOAD .NAM CAPTURE" }, unloadCapture { "UNLOAD" };
-    juce::Label namName, namInfo;
-    std::unique_ptr<juce::FileChooser> chooser;
+    LibrarySelector capture;
+    juce::TextButton loadCapture { "LOAD .NAM..." }, loadCaptureFolder { "LOAD FOLDER..." }, unloadCapture { "UNLOAD" };
+    juce::Label namInfo;
     juce::Colour accent = colours::accent;
     juce::String channelName = "LEAD";
     juce::Rectangle<int> housing, face, grill, modelPanel;
@@ -117,8 +118,8 @@ private:
     int slot;
     juce::Colour accent;
     MiniToggle onToggle;
-    ChoiceBox source;
-    juce::TextButton loadIR { "LOAD IR..." };
+    LibrarySelector source;
+    juce::TextButton loadIR { "LOAD IR..." }, loadFolder { "LOAD FOLDER..." };
     juce::Label fileLabel;
     Knob level, pan, mic;
     std::unique_ptr<juce::FileChooser> chooser;

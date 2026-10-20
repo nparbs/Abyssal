@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 using namespace abyssal;
 
@@ -93,13 +94,33 @@ void AbyssalProcessor::syncCabSources()
 
 void AbyssalProcessor::timerCallback() { syncCabSources(); }
 
-juce::String AbyssalProcessor::loadNamModel (const juce::File& file)
+//============================================================================== libraries
+const FileLibrary& AbyssalProcessor::irLibrary()
 {
-    const auto err = engine.getNam().loadModel (file);
-    if (err.isEmpty())
-        if (auto* p = apvts.getParameter (ids::ampMode))
-            p->setValueNotifyingHost (1.0f); // switch to the capture automatically
-    return err;
+    static const FileLibrary lib ("IRs", "*.wav;*.aif;*.aiff;*.flac");
+    return lib;
+}
+
+const FileLibrary& AbyssalProcessor::namLibrary()
+{
+    static const FileLibrary lib ("NAM", "*.nam");
+    return lib;
+}
+
+juce::String AbyssalProcessor::loadNamModel (const juce::File& original)
+{
+    if (! namLibrary().contains (original))
+        lastNamBrowseDirectory = original.getParentDirectory();
+
+    // Load the original first so broken files never end up in the library.
+    const auto err = engine.getNam().loadModel (original);
+    if (err.isNotEmpty())
+        return err;
+
+    engine.getNam().setModelFile (namLibrary().add (original));
+    if (auto* p = apvts.getParameter (ids::ampMode))
+        p->setValueNotifyingHost (1.0f); // switch to the capture automatically
+    return {};
 }
 
 void AbyssalProcessor::unloadNamModel()
@@ -109,8 +130,61 @@ void AbyssalProcessor::unloadNamModel()
         p->setValueNotifyingHost (0.0f);
 }
 
-juce::String AbyssalProcessor::loadUserIR (int slot, const juce::File& file)
+juce::String AbyssalProcessor::importNamFolder (const juce::File& folder)
 {
+    lastNamBrowseDirectory = folder.getParentDirectory();
+    const auto imported = namLibrary().importFolder (folder);
+    if (imported.isEmpty())
+        return "No .nam files found in " + folder.getFileName();
+    return loadNamModel (imported.getFirst());
+}
+
+bool AbyssalProcessor::removeFromNamLibrary (const juce::File& file)
+{
+    if (getNamFile() == file)
+        unloadNamModel();
+    return namLibrary().remove (file);
+}
+
+bool AbyssalProcessor::removeFromIRLibrary (const juce::File& file)
+{
+    // Slots using it fall back to a built-in cab (the file goes to the Recycle Bin, not deleted).
+    for (int s = 0; s < 2; ++s)
+        if (getUserIR (s) == file)
+            selectBuiltInCab (s, 0);
+    return irLibrary().remove (file);
+}
+
+void AbyssalProcessor::selectBuiltInCab (int slot, int builtIn)
+{
+    if (auto* p = apvts.getParameter (ids::cab (slot, "src")))
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::jlimit (0, Cabinet::numBuiltIns - 1, builtIn)));
+}
+
+juce::String AbyssalProcessor::importIRFolder (int slot, const juce::File& folder)
+{
+    lastIRBrowseDirectory = folder.getParentDirectory();
+    const auto imported = irLibrary().importFolder (folder);
+    if (imported.isEmpty())
+        return "No IR files (.wav / .aif / .flac) found in " + folder.getFileName();
+    return loadUserIR (slot, imported.getFirst());
+}
+
+juce::String AbyssalProcessor::loadUserIR (int slot, const juce::File& original)
+{
+    if (! irLibrary().contains (original))
+        lastIRBrowseDirectory = original.getParentDirectory();
+
+    // Validate before copying so broken files never end up in the library.
+    {
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (original));
+        if (reader == nullptr || reader->lengthInSamples < 16)
+            return "Couldn't read " + original.getFileName() + " as an impulse response";
+    }
+    const auto file = irLibrary().add (original);
+
     if (auto* p = apvts.getParameter (ids::cab (slot, "src")))
         p->setValueNotifyingHost (p->convertTo0to1 ((float) Cabinet::userSource));
     if (auto* p = apvts.getParameter (ids::cab (slot, "on")))

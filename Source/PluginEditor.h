@@ -54,6 +54,7 @@ private:
     std::array<juce::Component*, 5> pages {};
 
     std::unique_ptr<juce::FileChooser> chooser;
+    juce::TooltipWindow tooltips { this, 600 };
 };
 
 class AbyssalEditor : public juce::AudioProcessorEditor

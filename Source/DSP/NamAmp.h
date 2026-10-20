@@ -25,6 +25,8 @@ public:
 
     bool hasModel() const noexcept { return modelLoaded.load(); }
     juce::File getModelFile() const { return modelFile; }
+    /** Records where the loaded model lives (e.g. its library copy). Message thread only. */
+    void setModelFile (const juce::File& f) { modelFile = f; }
     double getModelSampleRate() const noexcept { return modelRate.load(); }
 
     /** Returns false if no model was available (caller should use the DSP amp instead). */
