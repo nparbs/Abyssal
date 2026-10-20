@@ -66,6 +66,14 @@
 - [x] Lighter UI repainting (cab view and chain bar repaint only on change)
 - [x] Render tool: chain-order stress tests (all pedals on, sides swapped, all post-amp) and mono output
 
+## Done — v0.2.1 (October 2026)
+
+- [x] Self-contained standalone exe and VST3 (static C++ runtime, no redistributable needed)
+- [x] ASIO driver support in the standalone app (Steinberg ASIO SDK fetched at configure time)
+- [x] Custom standalone app class: input unmuted on first run
+- [x] App icon
+- [x] Inno Setup installer (standalone + VST3 components, shortcuts, uninstaller) via `--target installer`
+
 ---
 
 ## Next — v0.3: playability
@@ -99,7 +107,7 @@
 ## v1.0: release
 - [ ] MIDI control: program change, CC learn for footswitches
 - [ ] Preset tags (multiple per preset) and user-defined categories
-- [ ] Installer (VST3 path copy) and code signing
+- [ ] Code signing for the installer and binaries
 - [ ] AU / CLAP formats; macOS build in CI
 - [ ] GitHub Actions: build plus `AbyssalRender` regression check on every push
 - [ ] User manual

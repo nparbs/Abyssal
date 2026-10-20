@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+# Link the C/C++ runtime statically so the exe / VST3 run on machines without the
+# Visual C++ Redistributable installed.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+option(ABYSSAL_ASIO "Build ASIO driver support into the standalone app (downloads the Steinberg ASIO SDK)" ON)
+
 include(FetchContent)
 
 # ---------------------------------------------------------------- JUCE
@@ -38,6 +44,18 @@ if (MSVC)
     target_compile_options(nam_core PRIVATE /bigobj /W0 "$<$<CONFIG:Release>:/O2>")
 endif()
 
+# ---------------------------------------------------------------- Steinberg ASIO SDK (headers only)
+if (ABYSSAL_ASIO AND WIN32)
+    FetchContent_Declare(asiosdk
+        URL           https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip
+        SOURCE_SUBDIR do-not-add)
+    FetchContent_MakeAvailable(asiosdk)
+    file(GLOB_RECURSE ASIO_HEADER "${asiosdk_SOURCE_DIR}/*/iasiodrv.h")
+    list(GET ASIO_HEADER 0 ASIO_HEADER)
+    get_filename_component(ASIO_COMMON_DIR "${ASIO_HEADER}" DIRECTORY)
+    message(STATUS "ASIO SDK: ${ASIO_COMMON_DIR}")
+endif()
+
 # ---------------------------------------------------------------- shared DSP sources
 set(ABYSSAL_DSP_SOURCES
     Source/DSP/Engine.cpp
@@ -67,6 +85,7 @@ juce_add_plugin(Abyssal
     IS_MIDI_EFFECT           FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD  FALSE
+    ICON_BIG                 Resources/icon.png
     VST3_CATEGORIES          Fx Distortion)
 
 target_sources(Abyssal PRIVATE
@@ -83,6 +102,15 @@ target_sources(Abyssal PRIVATE
 
 target_include_directories(Abyssal PRIVATE Source)
 target_compile_definitions(Abyssal PUBLIC ${ABYSSAL_COMMON_DEFS})
+
+if (ABYSSAL_ASIO AND WIN32)
+    target_compile_definitions(Abyssal PUBLIC JUCE_ASIO=1)
+    target_include_directories(Abyssal PUBLIC "${ASIO_COMMON_DIR}")
+endif()
+
+# Our own standalone application class (starts with the input unmuted - it's a guitar amp).
+target_sources(Abyssal_Standalone PRIVATE Source/StandaloneApp.cpp)
+target_compile_definitions(Abyssal_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
 
 target_link_libraries(Abyssal
     PRIVATE
@@ -109,3 +137,13 @@ target_link_libraries(AbyssalRender
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+
+# ---------------------------------------------------------------- Windows installer (Inno Setup)
+find_program(ISCC_EXE ISCC PATHS "$ENV{LOCALAPPDATA}/Programs/Inno Setup 6" "$ENV{ProgramFiles\(x86\)}/Inno Setup 6")
+if (ISCC_EXE)
+    add_custom_target(installer
+        COMMAND "${ISCC_EXE}" /Q "/DAppVersion=${PROJECT_VERSION}" "${CMAKE_SOURCE_DIR}/installer/Abyssal.iss"
+        DEPENDS Abyssal_VST3 Abyssal_Standalone
+        COMMENT "Building build/installer/AbyssalSetup-${PROJECT_VERSION}.exe"
+        VERBATIM)
+endif()

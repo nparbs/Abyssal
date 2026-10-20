@@ -34,7 +34,9 @@ Every control is an automatable host parameter. Pedal on/off switches crossfade 
 ## Building (Windows)
 
 Requirements: Visual Studio 2022/2026 with the C++ workload, Windows 10/11 SDK 10.0.22621 or newer, CMake 3.22+, Git.
-JUCE and NeuralAmpModelerCore are downloaded automatically.
+JUCE, NeuralAmpModelerCore and the Steinberg ASIO SDK are downloaded automatically
+(turn ASIO off with `-DABYSSAL_ASIO=OFF`). The C++ runtime is linked statically, so the exe and VST3
+run on any 64-bit Windows 10/11 machine without the Visual C++ Redistributable.
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 18 2026" -A x64
@@ -44,7 +46,26 @@ cmake --build build --config Release --target Abyssal_VST3 Abyssal_Standalone
 Outputs:
 
 - `build/Abyssal_artefacts/Release/VST3/Abyssal.vst3` → copy to `C:\Program Files\Common Files\VST3\`
-- `build/Abyssal_artefacts/Release/Standalone/Abyssal.exe` → runs directly (set your interface in Options → Audio settings)
+- `build/Abyssal_artefacts/Release/Standalone/Abyssal.exe` → a single self-contained exe
+
+### Installer
+
+With [Inno Setup 6](https://jrsoftware.org/isinfo.php) installed (`winget install JRSoftware.InnoSetup`):
+
+```powershell
+cmake --build build --config Release --target installer
+```
+
+This produces `build/installer/AbyssalSetup-1.0.0.exe`. It installs the standalone app (Start menu and optional
+desktop shortcut) and/or the VST3 into `C:\Program Files\Common Files\VST3\`, and adds an uninstaller.
+
+## Standalone app
+
+- **Options → Audio/MIDI Settings:** choose **ASIO** and your interface's driver for the lowest latency
+  (WASAPI and DirectSound are also available). Start with a 64–128 sample buffer.
+- The input is live on first launch (JUCE's default feedback-protection mute is off for a guitar amp).
+  If you're on laptop speakers with a mic, re-enable "Mute audio input" in the settings.
+- Device, buffer size and the last sound are remembered between launches.
 
 ## Offline test renderer
 
@@ -85,6 +106,12 @@ selector, input gain, output mode or bypass. Favourites are shared by every inst
 
 - NAM captures: [tone3000.com](https://www.tone3000.com) has thousands of free `.nam` files
 - Cab IRs: any mono/stereo `.wav` IR works (many free packs are available online)
+
+## Licensing note
+
+The ASIO SDK is dual-licensed by Steinberg (proprietary or GPLv3), and JUCE is AGPLv3 or commercial.
+Personal use is fine. Before distributing builds publicly, pick compatible licenses (e.g. release the
+source under GPLv3/AGPLv3, or get JUCE and Steinberg licences).
 
 ## Known limitations
 
