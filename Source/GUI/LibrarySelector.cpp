@@ -6,7 +6,7 @@ namespace abyssal::ui
 
 namespace
 {
-    enum MenuIds { loadFileId = 100, loadFolderId = 101, openFolderId = 102, removeId = 103, libraryBase = 1000 };
+    enum MenuIds { loadFileId = 100, loadFolderId = 101, openFolderId = 102, removeId = 103, onlineId = 104, libraryBase = 1000 };
 }
 
 LibrarySelector::LibrarySelector (Config c) : config (std::move (c))
@@ -86,6 +86,8 @@ void LibrarySelector::showMenu()
     menu.addSeparator();
     menu.addItem (loadFileId, "Load " + config.kind + " file...");
     menu.addItem (loadFolderId, "Load folder of " + config.kind + "s...");
+    if (config.openOnline)
+        menu.addItem (onlineId, "Get " + config.kind + "s from TONE3000...");
     menu.addItem (openFolderId, "Open " + config.kind + " library folder");
     if (current.existsAsFile() && config.library->contains (current))
         menu.addItem (removeId, "Remove \"" + current.getFileNameWithoutExtension() + "\" from library");
@@ -112,6 +114,7 @@ void LibrarySelector::handleResult (int r)
         case loadFileId:   browseForFile(); return;
         case loadFolderId: browseForFolder(); return;
         case openFolderId: config.library->getDirectory().startAsProcess(); return;
+        case onlineId:     if (config.openOnline) config.openOnline(); return;
         case removeId:
         {
             const auto file = config.currentFile();

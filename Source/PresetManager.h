@@ -39,6 +39,9 @@ public:
     bool isFavourite (const juce::String& key) const { return favourites.contains (key); }
     void setFavourite (const juce::String& key, bool shouldBeFavourite);
 
+    juce::String getTone3000Key() const { return settings->getValue ("t3kPublishableKey"); }
+    void setTone3000Key (const juce::String& key) { settings->setValue ("t3kPublishableKey", key.trim()); settings->saveIfNeeded(); }
+
     double getDefaultUiScale() const;
     void setDefaultUiScale (double scale);
 

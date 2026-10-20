@@ -63,6 +63,9 @@ public:
     bool removeFromNamLibrary (const juce::File& file);
     juce::File lastIRBrowseDirectory, lastNamBrowseDirectory;
 
+    /** Set by the editor: opens the TONE3000 panel (0 = amp, 1 = cab mic A, 2 = cab mic B). */
+    std::function<void (int target)> openTone3000;
+
     // presets
     juce::String savePreset (const juce::File& file);
     juce::String loadPreset (const juce::File& file);

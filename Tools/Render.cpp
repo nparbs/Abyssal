@@ -8,7 +8,71 @@
 #include "Parameters.h"
 #include "Presets.h"
 #include "FileLibrary.h"
+#include "Online/T3KAuth.h"
+#include <juce_cryptography/juce_cryptography.h>
 #include <iostream>
+
+/** Offline checks of the TONE3000 sign-in plumbing (no account or key needed). */
+static int tone3000Test()
+{
+    using namespace abyssal::t3k;
+    int fails = 0;
+    auto check = [&] (bool ok, const juce::String& what) { std::cout << (ok ? "  pass  " : "  FAIL  ") << what << std::endl; if (! ok) ++fails; };
+
+    // PKCE: 43-char URL-safe verifier, challenge = base64url(SHA-256(verifier)), unique per call.
+    const auto a = Pkce::generate(), b = Pkce::generate();
+    check (a.codeVerifier.length() == 43 && a.codeVerifier.containsOnly ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
+           "PKCE verifier is 43 URL-safe chars");
+    juce::SHA256 sha (a.codeVerifier.toRawUTF8(), a.codeVerifier.getNumBytesAsUTF8());
+    const auto raw = sha.getRawData();
+    const auto expected = juce::Base64::toBase64 (raw.getData(), raw.getSize()).replaceCharacter ('+', '-').replaceCharacter ('/', '_').removeCharacters ("=");
+    check (a.codeChallenge == expected, "PKCE challenge = base64url(SHA-256(verifier))");
+    check (a.codeVerifier != b.codeVerifier && a.state != b.state, "verifier and state are random per flow");
+
+    // Callback parsing
+    const auto cb = OAuthCallback::parse ("http://127.0.0.1:5000/callback?code=abc%20123&state=xyz&tone_id=42");
+    check (cb.code == "abc 123" && cb.state == "xyz" && cb.toneId == "42" && ! cb.canceled, "callback query parsed");
+    check (OAuthCallback::parse ("?canceled=true&state=s").canceled, "canceled callback recognised");
+
+    // Loopback server: a simulated browser redirect gets the landing page and reaches onCallback.
+    LoopbackServer server;
+    juce::String received;
+    server.onCallback = [&] (juce::String q) { received = q; };
+    check (server.start(), "loopback server binds 127.0.0.1");
+    const auto redirect = server.redirectUri();
+    check (redirect.startsWith ("http://127.0.0.1:") && redirect.endsWith ("/callback"), "redirect URI is " + redirect);
+
+    juce::Thread::launch ([redirect]
+    {
+        juce::URL (redirect + "?code=CODE&state=STATE&tone_id=7")
+            .createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress).withConnectionTimeoutMs (3000));
+    });
+    HttpRequest page;
+    page.url = juce::URL (redirect + "?code=PAGE&state=S");
+    page.timeoutMs = 3000;
+    juce::String html;
+    juce::Thread::launch ([&] { html = sendSync (page).text(); });
+    for (int i = 0; i < 60 && (received.isEmpty() || html.isEmpty()); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+    check (html.contains ("return to Abyssal"), "browser gets the landing page");
+    check (OAuthCallback::parse (received).code.isNotEmpty(), "redirect query delivered on the message thread");
+    server.stop();
+    check (! server.isRunning(), "server stops cleanly");
+
+    // Live endpoint check: an invalid code must come back as a readable OAuth error, not a crash.
+    HttpRequest req;
+    req.url = juce::URL ("https://www.tone3000.com/api/v1/oauth/token");
+    req.method = "POST";
+    req.headers.set ("Content-Type", "application/x-www-form-urlencoded");
+    req.body = formEncode ({ { "grant_type", "authorization_code" }, { "code", "invalid" }, { "code_verifier", a.codeVerifier },
+                             { "redirect_uri", "http://127.0.0.1:1/callback" }, { "client_id", "t3k_pub_invalid" } });
+    const auto res = sendSync (req);
+    std::cout << "  info  token endpoint answered HTTP " << res.status << ": " << res.text().substring (0, 160) << std::endl;
+    check (res.status >= 400 && res.status < 500, "TONE3000 token endpoint reachable and rejects a bogus code");
+
+    std::cout << (fails == 0 ? "TONE3000 OK" : "TONE3000 FAILURES") << std::endl;
+    return fails == 0 ? 0 : 1;
+}
 
 using namespace abyssal;
 
@@ -166,6 +230,8 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
 
+    if (argc > 1 && juce::String (argv[1]) == "--t3ktest")
+        return tone3000Test();
     if (argc > 2 && juce::String (argv[1]) == "--libtest")
         return libraryTest (juce::File (juce::String (argv[2])));
 

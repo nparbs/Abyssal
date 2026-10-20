@@ -119,6 +119,32 @@ Each cab slot and the amp's capture picker have a dropdown backed by a library f
 - **Remove from library** moves the file to the Recycle Bin; any slot using it falls back to a built-in cab.
 - Identical files are never duplicated. Broken files are rejected before they're copied.
 
+## Downloading from TONE3000
+
+Abyssal can download NAM captures and cab IRs straight from [TONE3000](https://www.tone3000.com) into the
+libraries above (`...\NAM\TONE3000\` and `...\IRs\TONE3000\`, one folder per tone with a credits file).
+
+**One-time setup:** TONE3000 requires each app to identify itself with a free *publishable key*.
+1. Sign in at tone3000.com and open **Settings → API**, then create a key.
+2. In Abyssal, click **TONE3000...** (amp page, a cab slot, or the dropdown menus), paste the
+   **publishable** key (`t3k_pub_...`) and click **SAVE KEY**. Never paste the secret key; Abyssal doesn't need it.
+3. Click **CONNECT**. Your browser opens TONE3000's sign-in, and it returns you to Abyssal automatically.
+
+**Getting tones:**
+- **PICK A TONE ON TONE3000.COM** opens the catalog in your browser, filtered to NAM captures or IRs.
+  Choose a tone and it appears in Abyssal.
+- **Favorites / Downloaded / Created / Trending / Latest** list tones without leaving the plugin.
+- Click a model to download it and load it into the amp or cab slot the panel was opened from
+  (**LOAD** once it's downloaded). **DOWNLOAD ALL STANDARD** grabs every standard-size model of the tone.
+
+**How sign-in works:** OAuth 2.0 with PKCE in your normal browser. The redirect goes to a one-off local
+server on `127.0.0.1`, and tokens are encrypted with Windows DPAPI in
+`%APPDATA%\Abyssal\tone3000.settings`, readable only by your Windows user. **DISCONNECT** removes them.
+
+**Free-tier limits:** TONE3000's free API tier (non-commercial use) doesn't include in-app keyword search,
+which is why browsing goes through their website. Tones belong to their creators; check each tone's
+license (shown in the panel and in the credits file) before using captures in released music.
+
 ## Where to get captures and IRs
 
 - NAM captures: [tone3000.com](https://www.tone3000.com) has thousands of free `.nam` files

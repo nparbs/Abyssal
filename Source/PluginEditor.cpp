@@ -35,7 +35,7 @@ MainView::MainView (AbyssalProcessor& p)
       outMeter ([&p] { return p.getOutputPeak(); }),
       chain (p), pedals (p),
       preBoard (p, pedals, true), ampPage (p), cabPage (p), eqPage (p), postBoard (p, pedals, false),
-      browser (p)
+      browser (p), tone3000 (p)
 {
     setOpaque (true);
 
@@ -48,6 +48,13 @@ MainView::MainView (AbyssalProcessor& p)
                                                              &outputKnob, &inMeter, &outMeter, &chain })
         addAndMakeVisible (c);
     addChildComponent (browser);
+    addChildComponent (tone3000);
+    proc.openTone3000 = [this] (int target)
+    {
+        browser.setVisible (false);
+        tone3000.open (target == 0 ? Tone3000Panel::Target::amp
+                                   : target == 1 ? Tone3000Panel::Target::cabA : Tone3000Panel::Target::cabB);
+    };
 
     inputSelect.setTooltip ("Which input channel carries your guitar");
     outputSelect.setTooltip ("Stereo, or mono for double-tracked hard-panned takes");
@@ -98,7 +105,11 @@ MainView::MainView (AbyssalProcessor& p)
     showPage (juce::jlimit (0, 4, proc.lastUiPage));
 }
 
-MainView::~MainView() { proc.presetChanged.removeChangeListener (this); }
+MainView::~MainView()
+{
+    proc.openTone3000 = nullptr;
+    proc.presetChanged.removeChangeListener (this);
+}
 
 void MainView::showPage (int index)
 {
@@ -207,6 +218,7 @@ void MainView::resized()
     for (auto* pg : pages)
         pg->setBounds (r.reduced (8, 6));
     browser.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
+    tone3000.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
 }
 
 //==============================================================================

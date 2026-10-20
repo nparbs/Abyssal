@@ -310,6 +310,7 @@ namespace
         c.importFolder = [&p] (const juce::File& f) { return p.importNamFolder (f); };
         c.removeFile = [&p] (const juce::File& f) { return p.removeFromNamLibrary (f); };
         c.browseStart = [&p] { return p.lastNamBrowseDirectory; };
+        c.openOnline = [&p] { if (p.openTone3000) p.openTone3000 (0); };
         c.addBottomItems = [&p] (juce::PopupMenu& m) { if (p.hasNamModel()) m.addItem (200, "Unload capture"); };
         c.handleExtraItem = [&p] (int id) { if (id == 200) p.unloadNamModel(); };
         return c;
@@ -334,6 +335,7 @@ namespace
         c.importFolder = [&p, slot] (const juce::File& f) { return p.importIRFolder (slot, f); };
         c.removeFile = [&p] (const juce::File& f) { return p.removeFromIRLibrary (f); };
         c.browseStart = [&p] { return p.lastIRBrowseDirectory; };
+        c.openOnline = [&p, slot] { if (p.openTone3000) p.openTone3000 (1 + slot); };
         c.addTopItems = [src] (juce::PopupMenu& m)
         {
             m.addSectionHeader ("BUILT-IN CABS");
@@ -371,7 +373,8 @@ AmpPage::AmpPage (AbyssalProcessor& p)
 {
     for (auto* c : std::initializer_list<juce::Component*> { &channel, &mode, &gain, &bass, &mid, &treble, &presence, &depth,
                                                              &master, &namIn, &namOut, &bright, &tight, &capture,
-                                                             &loadCapture, &loadCaptureFolder, &unloadCapture, &namInfo })
+                                                             &loadCapture, &loadCaptureFolder, &unloadCapture, &namInfo,
+                                                             &tone3000 })
         addAndMakeVisible (c);
 
     namInfo.setFont (font (13.0f));
@@ -379,6 +382,9 @@ AmpPage::AmpPage (AbyssalProcessor& p)
 
     loadCapture.onClick = [this] { capture.browseForFile(); };
     loadCaptureFolder.onClick = [this] { capture.browseForFolder(); };
+    tone3000.setColour (juce::TextButton::buttonColourId, colours::accent.withMultipliedBrightness (0.45f));
+    tone3000.setTooltip ("Browse and download NAM captures from TONE3000");
+    tone3000.onClick = [this] { if (proc.openTone3000) proc.openTone3000 (0); };
     capture.onChange = [this] { refreshNamLabel(); };
     unloadCapture.onClick = [this] { proc.unloadNamModel(); refreshNamLabel(); };
 
@@ -475,6 +481,8 @@ void AmpPage::resized()
     loadCaptureFolder.setBounds (row.removeFromLeft (140));
     row.removeFromLeft (6);
     unloadCapture.setBounds (row.removeFromLeft (90));
+    row.removeFromLeft (6);
+    tone3000.setBounds (row.removeFromLeft (110));
     mp.removeFromTop (6);
     namInfo.setBounds (mp.removeFromTop (22).withTrimmedLeft (316));
 }
@@ -717,7 +725,7 @@ CabSlotPanel::CabSlotPanel (AbyssalProcessor& p, int s)
       pan (p.apvts, ids::cab (s, "pan"), "Pan", s == 0 ? colours::accent : colours::accentAlt, true),
       mic (p.apvts, ids::cab (s, "mic"), "Mic Pos", s == 0 ? colours::accent : colours::accentAlt)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &source, &loadIR, &loadFolder, &fileLabel, &level, &pan, &mic })
+    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &source, &loadIR, &loadFolder, &tone3000, &fileLabel, &level, &pan, &mic })
         addAndMakeVisible (c);
 
     fileLabel.setFont (font (13.0f));
@@ -725,6 +733,9 @@ CabSlotPanel::CabSlotPanel (AbyssalProcessor& p, int s)
 
     loadIR.onClick = [this] { source.browseForFile(); };
     loadFolder.onClick = [this] { source.browseForFolder(); };
+    tone3000.setColour (juce::TextButton::buttonColourId, colours::accent.withMultipliedBrightness (0.45f));
+    tone3000.setTooltip ("Browse and download cab IRs from TONE3000");
+    tone3000.onClick = [this] { if (proc.openTone3000) proc.openTone3000 (1 + slot); };
     source.onChange = [this] { refreshFileLabel(); };
     refreshFileLabel();
 }
@@ -757,6 +768,8 @@ void CabSlotPanel::resized()
     loadIR.setBounds (row.removeFromLeft (100));
     row.removeFromLeft (6);
     loadFolder.setBounds (row.removeFromLeft (124));
+    row.removeFromLeft (6);
+    tone3000.setBounds (row.removeFromLeft (96));
     row.removeFromLeft (10);
     fileLabel.setBounds (row);
     r.removeFromTop (8);

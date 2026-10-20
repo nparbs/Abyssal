@@ -22,6 +22,7 @@ public:
         std::function<juce::String (const juce::File&)> importFolder;  // returns an error or ""
         std::function<bool (const juce::File&)> removeFile;
         std::function<juce::File()> browseStart;
+        std::function<void()> openOnline;                     // "Get from TONE3000..."
 
         // Optional extra sections: ids 1..99 above the library, 200..299 below it.
         std::function<void (juce::PopupMenu&)> addTopItems, addBottomItems;

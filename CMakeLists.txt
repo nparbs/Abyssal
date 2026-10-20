@@ -95,6 +95,9 @@ target_sources(Abyssal PRIVATE
     Source/PresetManager.cpp
     Source/FileLibrary.cpp
     Source/GUI/LibrarySelector.cpp
+    Source/GUI/Tone3000Panel.cpp
+    Source/Online/T3KAuth.cpp
+    Source/Online/Tone3000.cpp
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/GUI/LookAndFeel.cpp
@@ -119,6 +122,8 @@ target_link_libraries(Abyssal
         nam_core
         juce::juce_audio_utils
         juce::juce_dsp
+        juce::juce_cryptography
+        $<$<PLATFORM_ID:Windows>:bcrypt crypt32>
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -127,15 +132,17 @@ target_link_libraries(Abyssal
 # ---------------------------------------------------------------- offline render / test tool
 # Renders a synthetic riff through every factory preset to WAV and checks for NaNs / clipping.
 juce_add_console_app(AbyssalRender PRODUCT_NAME "AbyssalRender")
-target_sources(AbyssalRender PRIVATE Tools/Render.cpp Source/Presets.cpp Source/Parameters.cpp Source/FileLibrary.cpp ${ABYSSAL_DSP_SOURCES})
+target_sources(AbyssalRender PRIVATE Tools/Render.cpp Source/Presets.cpp Source/Parameters.cpp Source/FileLibrary.cpp Source/Online/T3KAuth.cpp ${ABYSSAL_DSP_SOURCES})
 target_include_directories(AbyssalRender PRIVATE Source)
-target_compile_definitions(AbyssalRender PRIVATE ${ABYSSAL_COMMON_DEFS} ABYSSAL_RENDER_TOOL=1)
+target_compile_definitions(AbyssalRender PRIVATE ${ABYSSAL_COMMON_DEFS} ABYSSAL_RENDER_TOOL=1 JUCE_MODAL_LOOPS_PERMITTED=1)
 target_link_libraries(AbyssalRender
     PRIVATE
         nam_core
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_dsp
+        juce::juce_cryptography
+        $<$<PLATFORM_ID:Windows>:bcrypt crypt32>
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

@@ -77,7 +77,8 @@ private:
     Knob gain, bass, mid, treble, presence, depth, master, namIn, namOut;
     MiniToggle bright, tight;
     LibrarySelector capture;
-    juce::TextButton loadCapture { "LOAD .NAM..." }, loadCaptureFolder { "LOAD FOLDER..." }, unloadCapture { "UNLOAD" };
+    juce::TextButton loadCapture { "LOAD .NAM..." }, loadCaptureFolder { "LOAD FOLDER..." }, unloadCapture { "UNLOAD" },
+                     tone3000 { "TONE3000..." };
     juce::Label namInfo;
     juce::Colour accent = colours::accent;
     juce::String channelName = "LEAD";
@@ -119,7 +120,7 @@ private:
     juce::Colour accent;
     MiniToggle onToggle;
     LibrarySelector source;
-    juce::TextButton loadIR { "LOAD IR..." }, loadFolder { "LOAD FOLDER..." };
+    juce::TextButton loadIR { "LOAD IR..." }, loadFolder { "LOAD FOLDER..." }, tone3000 { "TONE3000" };
     juce::Label fileLabel;
     Knob level, pan, mic;
     std::unique_ptr<juce::FileChooser> chooser;

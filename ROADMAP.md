@@ -83,9 +83,20 @@
 - [x] Tooltips enabled across the UI
 - [x] `AbyssalRender --libtest`: 16-check self-test of the library (import, de-dupe, step, remove)
 
+## Done — v0.2.3 (October 2026)
+
+- [x] TONE3000 integration: browser sign-in (OAuth 2.0 + PKCE, loopback redirect, DPAPI token storage),
+      pick a tone on tone3000.com, Favorites / Downloaded / Created / Trending / Latest lists,
+      per-model download + load, download-all-standard, credits file per tone
+- [x] `AbyssalRender --t3ktest`: PKCE, callback parsing, loopback server and live token-endpoint checks
+- [x] THIRD_PARTY_NOTICES.md (TONE3000 example code is MIT)
+
 ---
 
 ## Next — v0.3: playability
+
+- [ ] TONE3000: creator avatars + TONE3000 logo artwork per their design guidelines; favourite/unfavourite
+      from the panel; paging for long Favorites lists
 - [ ] **Tune by ear with a real guitar.** The voicings were set by measurement only.
 - [ ] Separate knob settings for each amp channel (currently shared)
 - [ ] Built-in tuner (with output mute)

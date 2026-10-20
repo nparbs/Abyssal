@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "GUI/Pages.h"
 #include "GUI/PresetBrowser.h"
+#include "GUI/Tone3000Panel.h"
 
 /** Shows the current preset's name and category; clicking opens the browser. */
 class PresetDisplay : public juce::Button
@@ -51,6 +52,7 @@ private:
     abyssal::ui::EQPage eqPage;
     abyssal::ui::BoardPage postBoard;
     abyssal::ui::PresetBrowser browser;
+    abyssal::ui::Tone3000Panel tone3000;
     std::array<juce::Component*, 5> pages {};
 
     std::unique_ptr<juce::FileChooser> chooser;
