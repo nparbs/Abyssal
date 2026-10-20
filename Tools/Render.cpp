@@ -1,0 +1,205 @@
+// AbyssalRender: offline test harness.
+//   AbyssalRender <outputDir> [sampleRate] [model.nam]
+// Synthesizes a metal DI riff, runs it through every factory preset, writes WAVs and prints
+// level / stability / CPU stats. Exits non-zero if any preset produces NaNs or silence.
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+#include "Parameters.h"
+#include "Presets.h"
+#include <iostream>
+
+using namespace abyssal;
+
+struct DummyProcessor : juce::AudioProcessor
+{
+    DummyProcessor() : apvts (*this, nullptr, "PARAMS", createParameterLayout()) {}
+    const juce::String getName() const override { return "dummy"; }
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+    double getTailLengthSeconds() const override { return 0; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock&) override {}
+    void setStateInformation (const void*, int) override {}
+
+    juce::AudioProcessorValueTreeState apvts;
+};
+
+/** Karplus-Strong plucked string, with optional palm-mute damping. */
+static void pluck (std::vector<float>& out, double sr, int start, double freq, double durSec, float amp, bool muted)
+{
+    const int period = std::max (2, (int) std::round (sr / freq));
+    std::vector<float> ring ((size_t) period);
+    juce::Random rng ((juce::int64) (freq * 1000 + start));
+    for (auto& s : ring) s = rng.nextFloat() * 2.0f - 1.0f;
+
+    const float damp = muted ? 0.35f : 0.4985f;     // averaging coefficient (0.5 = no loss)
+    const int len = (int) (durSec * sr);
+    float lp = 0;
+    for (int i = 0; i < len && start + i < (int) out.size(); ++i)
+    {
+        const int idx = i % period;
+        const int nxt = (idx + 1) % period;
+        const float y = ring[(size_t) idx];
+        ring[(size_t) idx] = damp * (y + ring[(size_t) nxt]);
+        lp = lp + 0.5f * (y - lp);
+        const float env = muted ? std::exp (-(float) i / (float) (0.09 * sr)) : 1.0f;
+        const float release = i > len - 200 ? (float) (len - i) / 200.0f : 1.0f; // fret-hand mute
+        out[(size_t) (start + i)] += amp * lp * env * release;
+    }
+}
+
+static std::vector<float> makeRiff (double sr)
+{
+    std::vector<float> x ((size_t) (sr * 9.0), 0.0f);
+    const double E2 = 82.41, B2 = 123.47, E3 = 164.81, F2 = 87.31, G2 = 98.0;
+    const double eighth = 60.0 / 160.0 / 2.0; // 160 bpm
+
+    // Gallop chugs on low E
+    for (int i = 0; i < 16; ++i)
+        pluck (x, sr, (int) (i * eighth * sr), E2, eighth * 0.95, 0.5f, true);
+
+    // Power chords (open, ringing)
+    const double t0 = 16 * eighth;
+    const double chords[3] = { E2, G2, F2 };
+    for (int c = 0; c < 3; ++c)
+    {
+        const int s = (int) ((t0 + c * 4 * eighth) * sr);
+        pluck (x, sr, s, chords[c], 4 * eighth * 0.95, 0.35f, false);
+        pluck (x, sr, s + 20, chords[c] * 1.4983, 4 * eighth * 0.95, 0.3f, false);
+        pluck (x, sr, s + 40, chords[c] * 2.0, 4 * eighth * 0.95, 0.25f, false);
+    }
+
+    // Lead line
+    const double t1 = t0 + 12 * eighth;
+    const double lead[] = { 329.6, 392.0, 440.0, 493.9, 587.3, 659.3, 587.3, 493.9 };
+    for (int i = 0; i < 8; ++i)
+        pluck (x, sr, (int) ((t1 + i * eighth) * sr), lead[i], eighth * (i == 7 ? 4 : 1), 0.3f, false);
+
+    // Normalise to -8 dBFS peak (typical hot DI), add a -75 dBFS noise floor for the gate.
+    float pk = 0;
+    for (auto s : x) pk = std::max (pk, std::abs (s));
+    juce::Random rng (99);
+    const float g = std::pow (10.0f, -8.0f / 20.0f) / pk;
+    for (auto& s : x) s = s * g + (rng.nextFloat() * 2.0f - 1.0f) * 0.00018f;
+    juce::ignoreUnused (E3, B2);
+    return x;
+}
+
+static bool writeWav (const juce::File& f, const juce::AudioBuffer<float>& buf, double sr)
+{
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    auto os = f.createOutputStream();
+    if (os == nullptr) return false;
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), sr, (unsigned) buf.getNumChannels(), 24, {}, 0));
+    if (w == nullptr) return false;
+    os.release(); // the writer owns the stream now
+    return w->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+}
+
+int main (int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+
+    const juce::File outDir (argc > 1 ? juce::String (argv[1]) : juce::File::getCurrentWorkingDirectory().getFullPathName());
+    const double sr = argc > 2 ? juce::String (argv[2]).getDoubleValue() : 48000.0;
+    const juce::String namPath = argc > 3 ? juce::String (argv[3]) : juce::String();
+    outDir.createDirectory();
+
+    const int block = 256;
+    const auto di = makeRiff (sr);
+    const int len = (int) di.size();
+
+    {
+        juce::AudioBuffer<float> diBuf (1, len);
+        std::copy (di.begin(), di.end(), diBuf.getWritePointer (0));
+        writeWav (outDir.getChildFile ("00_DI.wav"), diBuf, sr);
+    }
+
+    DummyProcessor proc;
+    ParamCache cache (proc.apvts);
+    int failures = 0;
+
+    auto runPreset = [&] (const FactoryPreset& preset, bool useNam, int index)
+    {
+        applyFactoryPreset (proc.apvts, preset);
+        EngineParams params;
+        cache.fill (params);
+        params.bpm = 160.0;
+
+        auto engine = std::make_unique<Engine>();
+        engine->prepare (sr, block);
+        for (int s = 0; s < 2; ++s)
+            engine->getCabinet().setSource (s, params.cab.slot[s].source);
+
+        if (useNam)
+        {
+            const auto err = engine->getNam().loadModel (juce::File (namPath));
+            if (err.isNotEmpty()) { std::cout << "NAM load failed: " << err << "\n"; ++failures; return; }
+            params.useNam = true;
+            std::cout << "  NAM model rate " << engine->getNam().getModelSampleRate() << " Hz, host " << sr << " Hz\n";
+        }
+
+        // Convolution IRs load on a background thread; give them a moment, then prime with silence.
+        juce::Thread::sleep (400);
+        juce::AudioBuffer<float> warm (2, block);
+        for (int i = 0; i < 20; ++i) { warm.clear(); engine->process (warm, params); }
+
+        juce::AudioBuffer<float> out (2, len);
+        out.clear();
+        std::copy (di.begin(), di.end(), out.getWritePointer (0));
+
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int start = 0; start < len; start += block)
+        {
+            const int n = std::min (block, len - start);
+            juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, start, n);
+            engine->process (view, params);
+        }
+        const auto ms = juce::Time::getMillisecondCounterHiRes() - t0;
+
+        bool nan = false;
+        double sumSq = 0; float pk = 0;
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < len; ++i)
+            {
+                const float v = out.getSample (c, i);
+                if (! std::isfinite (v)) nan = true;
+                pk = std::max (pk, std::abs (v));
+                sumSq += (double) v * v;
+            }
+        const double rms = std::sqrt (sumSq / (2.0 * len));
+        const double audioMs = 1000.0 * len / sr;
+
+        juce::String name = (useNam ? "NAM - " : "") + preset.name;
+        std::cout << juce::String (name).paddedRight (' ', 24)
+                  << " peak " << juce::String (juce::Decibels::gainToDecibels (pk), 1).paddedLeft (' ', 6) << " dBFS"
+                  << "  rms " << juce::String (juce::Decibels::gainToDecibels ((float) rms), 1).paddedLeft (' ', 6) << " dBFS"
+                  << "  cpu " << juce::String (100.0 * ms / audioMs, 1).paddedLeft (' ', 5) << "% of realtime"
+                  << (nan ? "  ** NaN **" : "") << (pk < 1.0e-4f ? "  ** SILENT **" : "") << "\n";
+
+        if (nan || pk < 1.0e-4f) ++failures;
+        auto fname = juce::String (index).paddedLeft ('0', 2) + "_" + name.replaceCharacters (" -", "__") + ".wav";
+        writeWav (outDir.getChildFile (fname), out, sr);
+    };
+
+    std::cout << "Rendering at " << sr << " Hz, block " << block << "\n";
+    int idx = 1;
+    for (const auto& p : getFactoryPresets())
+        runPreset (p, false, idx++);
+    if (namPath.isNotEmpty())
+        runPreset (getFactoryPresets()[1], true, idx++);
+
+    std::cout << (failures == 0 ? "OK" : "FAILURES: " + juce::String (failures)) << "\n";
+    return failures == 0 ? 0 : 1;
+}
