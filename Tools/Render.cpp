@@ -12,6 +12,85 @@
 #include <juce_cryptography/juce_cryptography.h>
 #include <iostream>
 
+/** Loads the built VST3 like a DAW would and checks every .nam in a folder actually loads inside the
+    plugin binary (state round-trip: namPath in -> namPath out only if the model loaded). */
+static int vst3Test (const juce::File& pluginFile, const juce::File& modelsDir)
+{
+    int fails = 0;
+    auto check = [&] (bool ok, const juce::String& what) { std::cout << (ok ? "  pass  " : "  FAIL  ") << what << std::endl; if (! ok) ++fails; };
+
+    juce::VST3PluginFormat format;
+    juce::OwnedArray<juce::PluginDescription> types;
+    format.findAllTypesForFile (types, pluginFile.getFullPathName());
+    check (! types.isEmpty(), "VST3 scanned: " + pluginFile.getFileName());
+    if (types.isEmpty()) return 1;
+
+    juce::String error;
+    auto plugin = format.createInstanceFromDescription (*types[0], 48000.0, 512, error);
+    check (plugin != nullptr, "VST3 instantiated " + error);
+    if (plugin == nullptr) return 1;
+    plugin->enableAllBuses();
+    plugin->prepareToPlay (48000.0, 512);
+
+    // A hosted VST3's state is JUCE's <VST3PluginState> envelope with the plugin's own state
+    // base64-encoded in <IComponent>. Read / edit / write Abyssal's state through it.
+    auto readPluginState = [&]() -> std::unique_ptr<juce::XmlElement>
+    {
+        juce::MemoryBlock outer;
+        plugin->getStateInformation (outer);
+        auto env = juce::AudioProcessor::getXmlFromBinary (outer.getData(), (int) outer.getSize());
+        if (env == nullptr) return {};
+        auto* comp = env->getChildByName ("IComponent");
+        juce::MemoryBlock inner;
+        if (comp == nullptr || ! inner.fromBase64Encoding (comp->getAllSubText())) return {};
+        return juce::AudioProcessor::getXmlFromBinary (inner.getData(), (int) inner.getSize());
+    };
+    auto writePluginState = [&] (const juce::XmlElement& state)
+    {
+        juce::MemoryBlock inner, outer;
+        juce::AudioProcessor::copyXmlToBinary (state, inner);
+        juce::XmlElement env ("VST3PluginState");
+        env.createNewChildElement ("IComponent")->addTextElement (inner.toBase64Encoding());
+        juce::AudioProcessor::copyXmlToBinary (env, outer);
+        plugin->setStateInformation (outer.getData(), (int) outer.getSize());
+    };
+
+    auto initial = readPluginState();
+    check (initial != nullptr && initial->hasTagName ("PARAMS"), "read Abyssal state through the VST3 wrapper");
+    if (initial == nullptr) return 1;
+
+    auto models = modelsDir.findChildFiles (juce::File::findFiles, false, "*.nam");
+    models.sort();
+    for (auto& model : models)
+    {
+        auto state = std::make_unique<juce::XmlElement> (*initial);
+        state->setAttribute ("namPath", model.getFullPathName());
+        writePluginState (*state);
+
+        // The plugin only reports a namPath back if the model really loaded.
+        auto after = readPluginState();
+        const bool loaded = after != nullptr && juce::File (after->getStringAttribute ("namPath")) == model;
+
+        // Run audio through it too, so a model that loads but crashes on process is caught.
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 20; ++i)
+        {
+            for (int s = 0; s < 512; ++s)
+                buffer.setSample (0, s, 0.2f * std::sin (0.05f * (float) (i * 512 + s)));
+            buffer.copyFrom (1, 0, buffer, 0, 0, 512);
+            plugin->processBlock (buffer, midi);
+        }
+        bool finite = true;
+        for (int s = 0; s < 512; ++s) finite = finite && std::isfinite (buffer.getSample (0, s));
+        check (loaded && finite, "plugin loads + plays " + model.getFileName());
+    }
+
+    plugin->releaseResources();
+    std::cout << (fails == 0 ? "VST3 NAM OK" : "VST3 NAM FAILURES") << std::endl;
+    return fails == 0 ? 0 : 1;
+}
+
 /** Offline checks of the TONE3000 sign-in plumbing (no account or key needed). */
 static int tone3000Test()
 {
@@ -230,6 +309,8 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
 
+    if (argc > 3 && juce::String (argv[1]) == "--vst3test")
+        return vst3Test (juce::File (juce::String (argv[2])), juce::File (juce::String (argv[3])));
     if (argc > 1 && juce::String (argv[1]) == "--t3ktest")
         return tone3000Test();
     if (argc > 2 && juce::String (argv[1]) == "--libtest")

@@ -78,6 +78,14 @@ build\AbyssalRender_artefacts\Release\AbyssalRender.exe renders 48000 [path\to\m
 
 It prints peak/RMS/CPU per preset and fails if any preset produces NaNs or silence.
 
+Other test modes:
+
+| Command | Checks |
+|---|---|
+| `AbyssalRender --vst3test <Abyssal.vst3> <folder of .nam>` | Hosts the **built VST3** like a DAW and verifies every capture in the folder loads and plays inside the plugin |
+| `AbyssalRender --libtest <folder of .nam>` | IR/NAM library import, de-duplication, stepping, removal |
+| `AbyssalRender --t3ktest` | TONE3000 PKCE, redirect handling and token endpoint |
+
 ## Presets
 
 Click the preset name to open the browser: filter by category, search, and star favourites. Clicking or

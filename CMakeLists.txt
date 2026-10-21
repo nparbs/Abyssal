@@ -113,6 +113,15 @@ if (ABYSSAL_ASIO AND WIN32)
     target_include_directories(Abyssal PUBLIC "${ASIO_COMMON_DIR}")
 endif()
 
+# NAM registers each model architecture (WaveNet, LSTM, SlimmableContainer, ...) from a static
+# initialiser in its own .cpp. JUCE builds plugin code into an intermediate static library
+# (Abyssal_SharedCode), and the linker drops objects nothing references - taking those registrations
+# with them ("No config parser registered for architecture ..."). Linking the NAM objects directly
+# into every final binary keeps them all.
+foreach(format_target Abyssal_VST3 Abyssal_Standalone)
+    target_sources(${format_target} PRIVATE $<TARGET_OBJECTS:nam_core>)
+endforeach()
+
 # Our own standalone application class (starts with the input unmuted - it's a guitar amp).
 target_sources(Abyssal_Standalone PRIVATE Source/StandaloneApp.cpp)
 target_compile_definitions(Abyssal_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
@@ -134,7 +143,7 @@ target_link_libraries(Abyssal
 juce_add_console_app(AbyssalRender PRODUCT_NAME "AbyssalRender")
 target_sources(AbyssalRender PRIVATE Tools/Render.cpp Source/Presets.cpp Source/Parameters.cpp Source/FileLibrary.cpp Source/Online/T3KAuth.cpp ${ABYSSAL_DSP_SOURCES})
 target_include_directories(AbyssalRender PRIVATE Source)
-target_compile_definitions(AbyssalRender PRIVATE ${ABYSSAL_COMMON_DEFS} ABYSSAL_RENDER_TOOL=1 JUCE_MODAL_LOOPS_PERMITTED=1)
+target_compile_definitions(AbyssalRender PRIVATE ${ABYSSAL_COMMON_DEFS} ABYSSAL_RENDER_TOOL=1 JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_PLUGINHOST_VST3=1)
 target_link_libraries(AbyssalRender
     PRIVATE
         nam_core
