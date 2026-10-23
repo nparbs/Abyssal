@@ -43,8 +43,14 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     abyssal::PresetManager presets;
 
-    juce::String loadNamModel (const juce::File& file);
+    using LoadDone = std::function<void (const juce::String& error)>;
+
+    /** Loads a capture on a background thread; `done` runs on the message thread with an error or "".
+        If another load starts first, this one is dropped and `done` is never called. */
+    void loadNamModel (const juce::File& file, LoadDone done = {});
     void unloadNamModel();
+    /** The capture being loaded right now, or File() if none. */
+    juce::File getNamLoadingFile() const { return namLoadingFile; }
     juce::File getNamFile() const { return engine.getNamConst().getModelFile(); }
     bool hasNamModel() const { return engine.getNamConst().hasModel(); }
     double getNamSampleRate() const { return engine.getNamConst().getModelSampleRate(); }
@@ -58,7 +64,7 @@ public:
     static const abyssal::FileLibrary& irLibrary();
     static const abyssal::FileLibrary& namLibrary();
     juce::String importIRFolder (int slot, const juce::File& folder);
-    juce::String importNamFolder (const juce::File& folder);
+    void importNamFolder (const juce::File& folder, LoadDone done);
     bool removeFromIRLibrary (const juce::File& file);
     bool removeFromNamLibrary (const juce::File& file);
     juce::File lastIRBrowseDirectory, lastNamBrowseDirectory;
@@ -107,5 +113,11 @@ private:
     // Idle detection: skip DSP when input has been silent and tails have died out.
     juce::int64 silentInputSamples = 0, quietOutputSamples = 0;
 
+    // Background NAM loading. Declared after `engine` so the pool (and any running job) goes first.
+    juce::ThreadPool namLoader { 1 };
+    std::atomic<int> namLoadGeneration { 0 };
+    juce::File namLoadingFile;
+
+    JUCE_DECLARE_WEAK_REFERENCEABLE (AbyssalProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AbyssalProcessor)
 };

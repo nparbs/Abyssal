@@ -304,10 +304,20 @@ namespace
         LibrarySelector::Config c;
         c.library = &AbyssalProcessor::namLibrary();
         c.kind = "capture";
-        c.currentFile = [&p] { return p.hasNamModel() ? p.getNamFile() : juce::File(); };
-        c.displayText = [&p] { return p.hasNamModel() ? p.getNamFile().getFileNameWithoutExtension() : juce::String ("No capture loaded"); };
-        c.loadFile = [&p] (const juce::File& f) { return p.loadNamModel (f); };
-        c.importFolder = [&p] (const juce::File& f) { return p.importNamFolder (f); };
+        // While a capture loads, treat it as current so < / > keep stepping from it.
+        c.currentFile = [&p]
+        {
+            const auto loading = p.getNamLoadingFile();
+            return loading != juce::File() ? loading : p.hasNamModel() ? p.getNamFile() : juce::File();
+        };
+        c.displayText = [&p]
+        {
+            const auto loading = p.getNamLoadingFile();
+            if (loading != juce::File()) return "Loading " + loading.getFileNameWithoutExtension() + "...";
+            return p.hasNamModel() ? p.getNamFile().getFileNameWithoutExtension() : juce::String ("No capture loaded");
+        };
+        c.loadFile = [&p] (const juce::File& f, LibrarySelector::Config::Done done) { p.loadNamModel (f, std::move (done)); };
+        c.importFolder = [&p] (const juce::File& f, LibrarySelector::Config::Done done) { p.importNamFolder (f, std::move (done)); };
         c.removeFile = [&p] (const juce::File& f) { return p.removeFromNamLibrary (f); };
         c.browseStart = [&p] { return p.lastNamBrowseDirectory; };
         c.openOnline = [&p] { if (p.openTone3000) p.openTone3000 (0); };
@@ -331,8 +341,8 @@ namespace
             return p.getUserIR (slot).existsAsFile() ? p.getUserIR (slot).getFileNameWithoutExtension()
                                                      : juce::String ("User IR (none loaded)");
         };
-        c.loadFile = [&p, slot] (const juce::File& f) { return p.loadUserIR (slot, f); };
-        c.importFolder = [&p, slot] (const juce::File& f) { return p.importIRFolder (slot, f); };
+        c.loadFile = [&p, slot] (const juce::File& f, LibrarySelector::Config::Done done) { done (p.loadUserIR (slot, f)); };
+        c.importFolder = [&p, slot] (const juce::File& f, LibrarySelector::Config::Done done) { done (p.importIRFolder (slot, f)); };
         c.removeFile = [&p] (const juce::File& f) { return p.removeFromIRLibrary (f); };
         c.browseStart = [&p] { return p.lastIRBrowseDirectory; };
         c.openOnline = [&p, slot] { if (p.openTone3000) p.openTone3000 (1 + slot); };
@@ -401,7 +411,9 @@ void AmpPage::timerCallback() { refreshNamLabel(); }
 void AmpPage::refreshNamLabel()
 {
     juce::String info = "Load a .nam file or a whole folder of captures to play through neural captures of real amps.";
-    if (proc.hasNamModel())
+    if (proc.getNamLoadingFile() != juce::File())
+        info = "Loading capture...";
+    else if (proc.hasNamModel())
     {
         const double mr = proc.getNamSampleRate(), hr = proc.getCurrentSampleRate();
         info = "Trained at " + juce::String (mr / 1000.0, 1) + " kHz";

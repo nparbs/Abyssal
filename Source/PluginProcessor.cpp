@@ -107,36 +107,56 @@ const FileLibrary& AbyssalProcessor::namLibrary()
     return lib;
 }
 
-juce::String AbyssalProcessor::loadNamModel (const juce::File& original)
+void AbyssalProcessor::loadNamModel (const juce::File& original, LoadDone done)
 {
     if (! namLibrary().contains (original))
         lastNamBrowseDirectory = original.getParentDirectory();
 
-    // Load the original first so broken files never end up in the library.
-    const auto err = engine.getNam().loadModel (original);
-    if (err.isNotEmpty())
-        return err;
+    const int generation = ++namLoadGeneration;
+    namLoadingFile = original;
 
-    engine.getNam().setModelFile (namLibrary().add (original));
-    if (auto* p = apvts.getParameter (ids::ampMode))
-        p->setValueNotifyingHost (1.0f); // switch to the capture automatically
-    return {};
+    // Build the model off the message thread: large captures take a noticeable moment.
+    namLoader.addJob ([this, original, generation, done, weak = juce::WeakReference<AbyssalProcessor> (this)]
+    {
+        if (generation != namLoadGeneration.load())
+            return; // superseded before it started
+        juce::String err;
+        auto prepared = engine.getNamConst().prepareModel (original, err);
+
+        juce::MessageManager::callAsync ([weak, original, generation, done, err, prepared]() mutable
+        {
+            auto* self = weak.get();
+            if (self == nullptr || generation != self->namLoadGeneration.load())
+                return; // the plugin closed, or a newer load (or unload) took over
+            self->namLoadingFile = juce::File();
+            if (prepared != nullptr)
+            {
+                // Load the original first so broken files never end up in the library.
+                self->engine.getNam().installModel (std::move (prepared), namLibrary().add (original));
+                if (auto* p = self->apvts.getParameter (ids::ampMode))
+                    p->setValueNotifyingHost (1.0f); // switch to the capture automatically
+            }
+            if (done) done (err);
+        });
+    });
 }
 
 void AbyssalProcessor::unloadNamModel()
 {
+    ++namLoadGeneration; // cancels a load in progress
+    namLoadingFile = juce::File();
     engine.getNam().unloadModel();
     if (auto* p = apvts.getParameter (ids::ampMode))
         p->setValueNotifyingHost (0.0f);
 }
 
-juce::String AbyssalProcessor::importNamFolder (const juce::File& folder)
+void AbyssalProcessor::importNamFolder (const juce::File& folder, LoadDone done)
 {
     lastNamBrowseDirectory = folder.getParentDirectory();
     const auto imported = namLibrary().importFolder (folder);
     if (imported.isEmpty())
-        return "No .nam files found in " + folder.getFileName();
-    return loadNamModel (imported.getFirst());
+        return done ("No .nam files found in " + folder.getFileName());
+    loadNamModel (imported.getFirst(), std::move (done));
 }
 
 bool AbyssalProcessor::removeFromNamLibrary (const juce::File& file)
@@ -296,9 +316,13 @@ void AbyssalProcessor::applyStateTree (const juce::ValueTree& tree, bool keepGlo
 
 void AbyssalProcessor::restoreFiles (const juce::ValueTree& state)
 {
+    // Synchronous on purpose: the host expects the sound to be ready once the state is set.
     const juce::File nam (state.getProperty ("namPath").toString());
     if (nam.existsAsFile() && nam != getNamFile())
+    {
+        ++namLoadGeneration;
         engine.getNam().loadModel (nam);
+    }
 
     const juce::String irKeys[] = { "irA", "irB" };
     for (int s = 0; s < 2; ++s)

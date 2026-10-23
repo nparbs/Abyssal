@@ -105,7 +105,7 @@
 - [ ] Report the extra latency from the NAM resampler and pitch effects to the host
 - [ ] Preset save dialog with name / category / notes; rename and delete from the browser
 - [ ] A/B compare snapshots
-- [ ] Load NAM captures on a background thread (large models briefly freeze the UI today)
+- [x] Load NAM captures on a background thread (large models briefly freeze the UI today)
 - [ ] Undo/redo for parameter changes
 
 ## v0.4: tone depth

@@ -11,6 +11,7 @@
 #include "Online/T3KAuth.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <iostream>
+#include <thread>
 
 /** Loads the built VST3 like a DAW would and checks every .nam in a folder actually loads inside the
     plugin binary (state round-trip: namPath in -> namPath out only if the model loaded). */
@@ -305,6 +306,50 @@ static int libraryTest (const juce::File& namExamples)
     return fails == 0 ? 0 : 1;
 }
 
+/** Background-load path: prepareModel() on a worker thread while the host changes rate and block
+    size, then installModel() must reconfigure for the new settings and play cleanly. */
+static int namLoadTest (const juce::File& model)
+{
+    int fails = 0;
+    auto check = [&] (bool ok, const juce::String& what) { std::cout << (ok ? "  pass  " : "  FAIL  ") << what << std::endl; if (! ok) ++fails; };
+
+    abyssal::NamAmp nam;
+    nam.prepare (48000.0, 512);
+
+    juce::String error;
+    abyssal::NamAmp::PreparedModel prepared;
+    std::thread worker ([&] { prepared = nam.prepareModel (model, error); });
+    nam.prepare (44100.0, 128); // the host changes settings mid-load
+    worker.join();
+    check (prepared != nullptr && error.isEmpty(), "prepareModel() on a worker thread: " + model.getFileName() + " " + error);
+    if (prepared == nullptr) return 1;
+    check (! nam.hasModel(), "nothing plays until the model is installed");
+
+    nam.installModel (std::move (prepared), model);
+    check (nam.hasModel() && nam.getModelFile() == model, "installModel() swaps the model in");
+
+    std::vector<float> buf (128);
+    float peak = 0.0f;
+    bool finite = true, processed = true;
+    for (int b = 0; b < 400; ++b)
+    {
+        for (int i = 0; i < 128; ++i)
+            buf[(size_t) i] = 0.3f * std::sin (0.03f * (float) (b * 128 + i));
+        processed = processed && nam.process (buf.data(), 128, 0.0f, 0.0f);
+        for (float v : buf) { finite = finite && std::isfinite (v); peak = std::max (peak, std::abs (v)); }
+    }
+    check (processed && finite && peak > 1.0e-4f, "plays at the new 44.1 kHz / 128 settings (peak "
+                                                  + juce::String (juce::Decibels::gainToDecibels (peak), 1) + " dB)");
+
+    juce::String badError;
+    check (nam.prepareModel (model.getSiblingFile ("does-not-exist.nam"), badError) == nullptr && badError.isNotEmpty(),
+           "a missing file reports an error instead of a model");
+    check (nam.hasModel() && nam.getModelFile() == model, "a failed load leaves the current model playing");
+
+    std::cout << (fails == 0 ? "NAM LOAD OK" : "NAM LOAD FAILURES") << std::endl;
+    return fails == 0 ? 0 : 1;
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -315,6 +360,8 @@ int main (int argc, char** argv)
         return tone3000Test();
     if (argc > 2 && juce::String (argv[1]) == "--libtest")
         return libraryTest (juce::File (juce::String (argv[2])));
+    if (argc > 2 && juce::String (argv[1]) == "--namtest")
+        return namLoadTest (juce::File (juce::String (argv[2])));
 
     const juce::File outDir (argc > 1 ? juce::String (argv[1]) : juce::File::getCurrentWorkingDirectory().getFullPathName());
     const double sr = argc > 2 ? juce::String (argv[2]).getDoubleValue() : 48000.0;

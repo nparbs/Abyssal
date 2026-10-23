@@ -45,11 +45,25 @@ void LibrarySelector::report (const juce::String& error)
     if (onChange) onChange();
 }
 
+LibrarySelector::Config::Done LibrarySelector::reporter()
+{
+    return [safe = juce::Component::SafePointer<LibrarySelector> (this)] (const juce::String& err)
+    {
+        if (safe != nullptr) safe->report (err);
+    };
+}
+
+void LibrarySelector::load (const juce::File& file)
+{
+    config.loadFile (file, reporter());
+    refresh(); // shows "Loading..." straight away when the load runs in the background
+}
+
 void LibrarySelector::step (int delta)
 {
     const auto file = config.library->step (config.currentFile(), delta);
     if (file.existsAsFile())
-        report (config.loadFile (file));
+        load (file);
 }
 
 void LibrarySelector::showMenu()
@@ -107,7 +121,7 @@ void LibrarySelector::handleResult (int r)
     if (r <= 0) return;
 
     if (r >= libraryBase && r - libraryBase < menuFiles.size())
-        return report (config.loadFile (menuFiles[r - libraryBase]));
+        return load (menuFiles[r - libraryBase]);
 
     switch (r)
     {
@@ -147,7 +161,7 @@ void LibrarySelector::browseForFile()
                           [safe = juce::Component::SafePointer<LibrarySelector> (this)] (const juce::FileChooser& fc)
     {
         if (safe == nullptr || fc.getResult() == juce::File()) return;
-        safe->report (safe->config.loadFile (fc.getResult()));
+        safe->load (fc.getResult());
     });
 }
 
@@ -162,9 +176,9 @@ void LibrarySelector::browseForFolder()
     {
         if (safe == nullptr || fc.getResult() == juce::File()) return;
         juce::MouseCursor::showWaitCursor(); // copying a pack can take a moment
-        const auto err = safe->config.importFolder (fc.getResult());
+        safe->config.importFolder (fc.getResult(), safe->reporter());
         juce::MouseCursor::hideWaitCursor();
-        safe->report (err);
+        safe->refresh();
     });
 }
 

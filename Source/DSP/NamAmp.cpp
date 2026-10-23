@@ -34,6 +34,8 @@ struct LinearFifo
 struct NamAmp::Model
 {
     std::unique_ptr<nam::DSP> dsp;
+    double hostRate = 48000.0;   // host settings this model was configured for
+    int hostBlock = 512;
     double rate = 48000.0;
     bool resample = false;
     float normGain = 1.0f;
@@ -48,13 +50,15 @@ struct NamAmp::Model
 NamAmp::NamAmp() = default;
 NamAmp::~NamAmp() = default;
 
-void NamAmp::configure (Model& m) const
+void NamAmp::configure (Model& m, double sampleRate, int blockSize) const
 {
+    m.hostRate = sampleRate;
+    m.hostBlock = blockSize;
     m.rate = m.dsp->GetExpectedSampleRate() > 0 ? m.dsp->GetExpectedSampleRate() : 48000.0;
-    m.resample = std::abs (m.rate - hostRate) > 0.5;
-    m.maxModelBlock = (int) std::ceil (hostBlock * (m.resample ? m.rate / hostRate : 1.0)) + 8;
+    m.resample = std::abs (m.rate - sampleRate) > 0.5;
+    m.maxModelBlock = (int) std::ceil (blockSize * (m.resample ? m.rate / sampleRate : 1.0)) + 8;
 
-    m.dsp->Reset (m.resample ? m.rate : hostRate, m.maxModelBlock);
+    m.dsp->Reset (m.resample ? m.rate : sampleRate, m.maxModelBlock);
 
     m.namIn.assign ((size_t) m.maxModelBlock, 0.0);
     m.namOut.assign ((size_t) m.maxModelBlock, 0.0);
@@ -62,7 +66,7 @@ void NamAmp::configure (Model& m) const
     m.modelInF.assign ((size_t) m.maxModelBlock, 0.0f);
     m.modelOutF.assign ((size_t) m.maxModelBlock, 0.0f);
 
-    m.inFifo.allocate (hostBlock * 2 + 64);
+    m.inFifo.allocate (blockSize * 2 + 64);
     m.midFifo.allocate (m.maxModelBlock * 3 + 128);
     static const float silence[32] = {};
     m.midFifo.push (silence, 32); // small cushion so the output side never underruns
@@ -78,44 +82,66 @@ void NamAmp::prepare (double sampleRate, int maxBlock)
     hostBlock = maxBlock;
     const juce::SpinLock::ScopedLockType sl (lock);
     if (model)
-        configure (*model);
+        configure (*model, sampleRate, maxBlock);
 }
 
 void NamAmp::reset()
 {
     const juce::SpinLock::ScopedLockType sl (lock);
     if (model)
-        configure (*model);
+        configure (*model, hostRate, hostBlock);
 }
 
-juce::String NamAmp::loadModel (const juce::File& file)
+NamAmp::PreparedModel NamAmp::prepareModel (const juce::File& file, juce::String& error) const
 {
-    auto fresh = std::make_unique<Model>();
+    auto fresh = std::make_shared<Model>();
     try
     {
         fresh->dsp = nam::get_dsp (std::filesystem::path (file.getFullPathName().toWideCharPointer()));
         if (fresh->dsp == nullptr)
-            return "Could not load model";
-        configure (*fresh);
+        {
+            error = "Could not load model";
+            return nullptr;
+        }
+        configure (*fresh, hostRate, hostBlock);
     }
     catch (const std::exception& e)
     {
-        return juce::String ("Could not load model: ") + e.what();
+        error = juce::String ("Could not load model: ") + e.what();
+        return nullptr;
     }
+    return fresh;
+}
 
+void NamAmp::installModel (PreparedModel fresh, const juce::File& file)
+{
+    jassert (fresh != nullptr);
     modelRate = fresh->rate;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
+        // The host may have changed rate or block size while the model was being prepared.
+        if (fresh->hostRate != hostRate || fresh->hostBlock != hostBlock)
+            configure (*fresh, hostRate, hostBlock);
         std::swap (model, fresh);
     }
     modelFile = file;
     modelLoaded = true;
-    return {}; // the previous model is destroyed here, outside the lock
+    // the previous model is destroyed here, outside the lock
+}
+
+juce::String NamAmp::loadModel (const juce::File& file)
+{
+    juce::String error;
+    auto prepared = prepareModel (file, error);
+    if (prepared == nullptr)
+        return error;
+    installModel (std::move (prepared), file);
+    return {};
 }
 
 void NamAmp::unloadModel()
 {
-    std::unique_ptr<Model> old;
+    std::shared_ptr<Model> old;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
         std::swap (model, old);
@@ -131,8 +157,9 @@ bool NamAmp::process (float* data, int n, float inGainDb, float outGainDb)
         return false;
 
     const float inGain = dbToGain (inGainDb), outGain = dbToGain (outGainDb);
-    for (int start = 0; start < n; start += hostBlock)
-        processModel (*model, data + start, std::min (hostBlock, n - start), inGain, outGain);
+    const int block = model->hostBlock;
+    for (int start = 0; start < n; start += block)
+        processModel (*model, data + start, std::min (block, n - start), inGain, outGain);
     return true;
 }
 
@@ -158,7 +185,7 @@ void NamAmp::processModel (Model& m, float* data, int n, float inGain, float out
 
     // host rate -> model rate
     m.inFifo.push (data, n);
-    const double upSpeed = hostRate / m.rate; // input samples consumed per output sample
+    const double upSpeed = m.hostRate / m.rate; // input samples consumed per output sample
     int numModel = (int) std::floor ((m.inFifo.count - 2) / upSpeed);
     numModel = juce::jlimit (0, m.maxModelBlock, numModel);
     if (numModel > 0)
@@ -170,7 +197,7 @@ void NamAmp::processModel (Model& m, float* data, int n, float inGain, float out
     }
 
     // model rate -> host rate
-    const double downSpeed = m.rate / hostRate;
+    const double downSpeed = m.rate / m.hostRate;
     if (m.midFifo.count >= (int) std::ceil (n * downSpeed) + 2)
     {
         const int used = m.down.process (downSpeed, m.midFifo.data.data(), data, n);

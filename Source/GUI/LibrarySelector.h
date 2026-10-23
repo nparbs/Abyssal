@@ -18,8 +18,10 @@ public:
         juce::String kind;                                    // "IR", "capture" - used in menu text
         std::function<juce::File()> currentFile;              // the active library file, or File() if none
         std::function<juce::String()> displayText;
-        std::function<juce::String (const juce::File&)> loadFile;      // returns an error or ""
-        std::function<juce::String (const juce::File&)> importFolder;  // returns an error or ""
+        // Loading can finish later (e.g. on a background thread): call `done` with an error or "".
+        using Done = std::function<void (const juce::String& error)>;
+        std::function<void (const juce::File&, Done)> loadFile;
+        std::function<void (const juce::File&, Done)> importFolder;
         std::function<bool (const juce::File&)> removeFile;
         std::function<juce::File()> browseStart;
         std::function<void()> openOnline;                     // "Get from TONE3000..."
@@ -50,6 +52,8 @@ private:
     void handleResult (int result);
     void step (int delta);
     void report (const juce::String& error);
+    void load (const juce::File& file);
+    Config::Done reporter();
 
     Config config;
     Box box;

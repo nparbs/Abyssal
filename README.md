@@ -84,6 +84,7 @@ Other test modes:
 |---|---|
 | `AbyssalRender --vst3test <Abyssal.vst3> <folder of .nam>` | Hosts the **built VST3** like a DAW and verifies every capture in the folder loads and plays inside the plugin |
 | `AbyssalRender --libtest <folder of .nam>` | IR/NAM library import, de-duplication, stepping, removal |
+| `AbyssalRender --namtest <model.nam>` | Background capture loading: prepare on a worker thread while the host changes rate, then install and play |
 | `AbyssalRender --t3ktest` | TONE3000 PKCE, redirect handling and token endpoint |
 
 ## Presets

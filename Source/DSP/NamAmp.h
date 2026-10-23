@@ -9,17 +9,30 @@ namespace abyssal
 
 /** Hosts a Neural Amp Modeler (.nam) capture. Loading happens off the audio thread; the model is
     swapped in under a try-lock. If the host rate differs from the model's training rate the audio
-    is streamed through a pair of Lagrange resamplers. */
+    is streamed through a pair of Lagrange resamplers.
+
+    Loading is split in two so big models don't freeze the UI: prepareModel() does the slow part
+    (parsing, building and warming up the network) on any thread, and installModel() swaps the
+    result in on the message thread. */
 class NamAmp
 {
 public:
+    struct Model;
+    using PreparedModel = std::shared_ptr<Model>;
+
     NamAmp();
     ~NamAmp();
 
     void prepare (double sampleRate, int maxBlock);
     void reset();
 
-    /** Loads a model (call from the message thread). Returns an error message, or empty on success. */
+    /** Builds a model ready to install. Safe on a worker thread. Returns nullptr and sets `error`
+        on failure. */
+    PreparedModel prepareModel (const juce::File& file, juce::String& error) const;
+    /** Swaps a prepared model in (message thread). The previous model is freed here. */
+    void installModel (PreparedModel prepared, const juce::File& file);
+
+    /** Prepares and installs in one go (message thread). Returns an error message, or empty on success. */
     juce::String loadModel (const juce::File& file);
     void unloadModel();
 
@@ -33,18 +46,18 @@ public:
     bool process (float* data, int n, float inGainDb, float outGainDb);
 
 private:
-    struct Model;
-    void configure (Model& m) const;
+    void configure (Model& m, double sampleRate, int blockSize) const;
     void processModel (Model& m, float* data, int n, float inGain, float outGain);
 
     juce::SpinLock lock;
-    std::unique_ptr<Model> model;
+    std::shared_ptr<Model> model;
     juce::File modelFile;
     std::atomic<bool> modelLoaded { false };
     std::atomic<double> modelRate { 48000.0 };
 
-    double hostRate = 48000.0;
-    int hostBlock = 512;
+    // Written in prepare(); read by prepareModel() on the loader thread.
+    std::atomic<double> hostRate { 48000.0 };
+    std::atomic<int> hostBlock { 512 };
 };
 
 } // namespace abyssal

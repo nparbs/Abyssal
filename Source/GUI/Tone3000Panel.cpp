@@ -400,15 +400,22 @@ void Tone3000Panel::downloadAllStandard()
 
 void Tone3000Panel::loadFile (const juce::File& file)
 {
-    juce::String err;
+    const bool amp = target == Target::amp;
+    auto finished = [safe = juce::Component::SafePointer<Tone3000Panel> (this), file, amp] (const juce::String& err)
+    {
+        if (safe == nullptr) return;
+        safe->setStatus (err.isNotEmpty() ? err : "Loaded " + file.getFileNameWithoutExtension()
+                                                  + (amp ? " into the amp." : " into the cab."), err.isNotEmpty());
+    };
     switch (target)
     {
-        case Target::amp:  err = proc.loadNamModel (file); break;
-        case Target::cabA: err = proc.loadUserIR (0, file); break;
-        case Target::cabB: err = proc.loadUserIR (1, file); break;
+        case Target::amp:
+            setStatus ("Loading " + file.getFileNameWithoutExtension() + "...");
+            proc.loadNamModel (file, finished);
+            break;
+        case Target::cabA: finished (proc.loadUserIR (0, file)); break;
+        case Target::cabB: finished (proc.loadUserIR (1, file)); break;
     }
-    setStatus (err.isNotEmpty() ? err : "Loaded " + file.getFileNameWithoutExtension()
-                                        + (target == Target::amp ? " into the amp." : " into the cab."), err.isNotEmpty());
 }
 
 //============================================================================== layout + paint
