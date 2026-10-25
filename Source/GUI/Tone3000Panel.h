@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Widgets.h"
+#include "PresetBrowser.h" // drawStar
+#include <map>
 #include "../Online/Tone3000.h"
 
 class AbyssalProcessor;
@@ -33,7 +35,13 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshConnection(); }
     void refreshConnection();
     void setFormat (bool ir);
-    void showList (int tab);
+    void showList (int tab, bool nextPage = false);
+    void toggleFavorite (const t3k::Tone& tone);
+    bool isFavorite (int toneId) const { return favoriteIds.contains (toneId); }
+    void refreshFavoriteButton();
+    void loadKnownFavorites (int page = 1);
+    /** The creator's avatar, or an invalid image while it downloads (or if there is none). */
+    juce::Image avatarFor (const t3k::EmbeddedUser& user);
     void pickOnWebsite();
     void showTone (int toneId);
     void setTone (const t3k::Tone& tone);
@@ -59,6 +67,11 @@ private:
     juce::String status;
     bool statusIsError = false;
     int requestSerial = 0;
+    bool favoritesLoaded = false;
+    int listPage = 1, listTotalPages = 1, hiddenCount = 0;
+    juce::Array<int> favoriteIds;   // known favourites (from the Favorites list and toggles here)
+    std::map<juce::String, juce::Image> avatars;
+    juce::StringArray avatarRequests;
 
     juce::TextEditor keyEditor;
     juce::TextButton saveKey { "SAVE KEY" }, connectButton { "CONNECT" }, closeButton { "CLOSE" };
@@ -69,7 +82,7 @@ private:
     std::unique_ptr<ToneListModel> toneModel;
     std::unique_ptr<ModelListModel> modelModel;
     juce::ListBox toneList, modelList;
-    juce::TextButton downloadAll { "DOWNLOAD ALL STANDARD" };
+    juce::TextButton downloadAll { "DOWNLOAD ALL STANDARD" }, loadMore { "LOAD MORE" }, favoriteButton { "FAVORITE" };
     juce::HyperlinkButton toneLink { "Open on tone3000.com", juce::URL() };
 
     juce::Rectangle<int> detailArea, headerArea;

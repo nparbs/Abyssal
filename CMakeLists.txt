@@ -63,7 +63,11 @@ set(ABYSSAL_DSP_SOURCES
     Source/DSP/NamAmp.cpp
     Source/DSP/Cabinet.cpp
     Source/DSP/Pedals.cpp
-    Source/DSP/PostFX.cpp)
+    Source/DSP/PostFX.cpp
+    Source/DSP/Tuner.cpp
+    Source/DSP/ToneStack.cpp
+    Source/DSP/PitchShifter.cpp
+    Source/DSP/ModFX.cpp)
 
 set(ABYSSAL_COMMON_DEFS
     JUCE_WEB_BROWSER=0
@@ -103,7 +107,9 @@ target_sources(Abyssal PRIVATE
     Source/GUI/LookAndFeel.cpp
     Source/GUI/Widgets.cpp
     Source/GUI/Pages.cpp
-    Source/GUI/PresetBrowser.cpp)
+    Source/GUI/PresetBrowser.cpp
+    Source/GUI/PresetDialog.cpp
+    Source/GUI/TunerPanel.cpp)
 
 target_include_directories(Abyssal PRIVATE Source)
 target_compile_definitions(Abyssal PUBLIC ${ABYSSAL_COMMON_DEFS})

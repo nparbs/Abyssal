@@ -12,7 +12,7 @@ static inline float timeCoef (double sampleRate, double ms)
 void NoiseGate::prepare (double sampleRate, int) { sr = sampleRate; reset(); }
 void NoiseGate::reset() { env = 0; gain = 0; holdCounter = 0; open = false; gainReductionDb = 0; }
 
-void NoiseGate::process (float* data, int n, const GateParams& p)
+void NoiseGate::process (float* data, int n, const GateParams& p, const float* key)
 {
     const float detRelease = timeCoef (sr, 25.0);
     const float attack     = timeCoef (sr, 0.5);
@@ -23,7 +23,7 @@ void NoiseGate::process (float* data, int n, const GateParams& p)
 
     for (int i = 0; i < n; ++i)
     {
-        const float a = std::abs (data[i]);
+        const float a = std::abs (key != nullptr ? key[i] : data[i]);
         env = a > env ? a : env * detRelease;
 
         if (env > openLin)            { open = true; holdCounter = holdLen; }
@@ -38,39 +38,11 @@ void NoiseGate::process (float* data, int n, const GateParams& p)
     gainReductionDb = gainToDb (gain);
 }
 
-//============================================================================== PitchShifter
-void PitchShifter::prepare (double sampleRate, double windowMs)
-{
-    window = (float) (windowMs * 0.001 * sampleRate);
-    delay.prepare ((int) (window * 2.0f) + 16);
-    reset();
-}
-
-void PitchShifter::reset() { delay.reset(); phase = 0; }
-
-float PitchShifter::process (float x) noexcept
-{
-    delay.push (x);
-
-    phase += (1.0f - ratio) / window;
-    if (phase >= 1.0f) phase -= 1.0f;
-    if (phase < 0.0f)  phase += 1.0f;
-
-    float phase2 = phase + 0.5f;
-    if (phase2 >= 1.0f) phase2 -= 1.0f;
-
-    // Each tap fades to zero exactly where its delay wraps, and the sin² pair always sums to 1.
-    const float s1 = std::sin (juce::MathConstants<float>::pi * phase);
-    const float s2 = std::sin (juce::MathConstants<float>::pi * phase2);
-    return s1 * s1 * delay.read (phase * window + 2.0f)
-         + s2 * s2 * delay.read (phase2 * window + 2.0f);
-}
-
 //============================================================================== Octaver
 void Octaver::prepare (double sampleRate, int)
 {
-    oct1.prepare (sampleRate, 55.0);
-    oct2.prepare (sampleRate, 70.0);
+    oct1.prepare (sampleRate, 30.0);
+    oct2.prepare (sampleRate, 30.0);
     oct1.setRatio (0.5f);
     oct2.setRatio (0.25f);
     preLp.setup (Biquad::Type::LowPass, sampleRate, 1400.0, 0.6);
@@ -94,7 +66,7 @@ void Octaver::process (float* data, int n, const OctaverParams& p)
 }
 
 //============================================================================== DropTune
-void DropTune::prepare (double sampleRate, int) { shifter.prepare (sampleRate, 35.0); reset(); }
+void DropTune::prepare (double sampleRate, int) { shifter.prepare (sampleRate, 30.0); reset(); }
 void DropTune::reset() { shifter.reset(); }
 
 void DropTune::process (float* data, int n, const DropTuneParams& p)

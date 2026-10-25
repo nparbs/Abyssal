@@ -72,16 +72,19 @@ private:
     void modeChanged (int mode);
     void refreshNamLabel();
 
+    void bindFaceplate();
+
     AbyssalProcessor& proc;
-    ChoiceButtons channel, mode;
-    Knob gain, bass, mid, treble, presence, depth, master, namIn, namOut;
-    MiniToggle bright, tight;
+    ChoiceButtons channel, mode, power;
+    Knob gain, bass, mid, treble, presence, depth, master, namIn, namOut, calLevel;
+    MiniToggle bright, tight, calibrate;
     LibrarySelector capture;
     juce::TextButton loadCapture { "LOAD .NAM..." }, loadCaptureFolder { "LOAD FOLDER..." }, unloadCapture { "UNLOAD" },
                      tone3000 { "TONE3000..." };
     juce::Label namInfo;
     juce::Colour accent = colours::accent;
     juce::String channelName = "LEAD";
+    int currentChannel = 2;
     juce::Rectangle<int> housing, face, grill, modelPanel;
     int currentMode = 0;
 };
@@ -118,11 +121,12 @@ private:
     AbyssalProcessor& proc;
     int slot;
     juce::Colour accent;
-    MiniToggle onToggle;
+    MiniToggle onToggle, invert;
     LibrarySelector source;
     juce::TextButton loadIR { "LOAD IR..." }, loadFolder { "LOAD FOLDER..." }, tone3000 { "TONE3000" };
     juce::Label fileLabel;
-    Knob level, pan, mic;
+    ChoiceBox micType;
+    Knob level, pan, mic, distance;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
@@ -137,7 +141,7 @@ private:
     void timerCallback() override { slotA.refreshFileLabel(); slotB.refreshFileLabel(); }
     CabView view;
     CabSlotPanel slotA, slotB;
-    MiniToggle cabOn;
+    MiniToggle cabOn, align;
 };
 
 //============================================================================== Parametric EQ

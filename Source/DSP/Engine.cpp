@@ -16,10 +16,14 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     work.setSize (2, maxBlock);
     fxTmp.setSize (2, maxBlock);
     bypassDry.setSize (2, maxBlock);
+    gateKey.setSize (1, maxBlock);
 
     inGain.reset (sr, 0.03);
     outGain.reset (sr, 0.03);
     namMix.reset (sr, 0.05);
+    muteGain.reset (sr, 0.02);
+    muteGain.setCurrentAndTargetValue (1.0f);
+    tunerTap.prepare (sr);
 
     for (int c = 0; c < 2; ++c)
     {
@@ -29,21 +33,29 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
         comp[c].prepare (sr, maxBlock);
         od[c].prepare (sr, maxBlock);
         geq[c].prepare (sr, maxBlock);
-        latencyLine[c].assign (1024, 0.0f);
+        wah[c].prepare (sr);
+        whammy[c].prepare (sr);
+        phaser[c].prepare (sr, c == 0 ? 0.0f : 0.25f); // the right side sweeps 90 degrees ahead post-amp
+        tremolo[c].prepare (sr, c == 1);
+        latencyLine[c].assign ((size_t) latencyLineSize, 0.0f);
     }
     latencyWrite = 0;
 
     amp.prepare (sr, maxBlock);
     nam.prepare (sr, maxBlock);
+    namTone.prepare (sr);
     cab.prepare (sr, maxBlock);
     peq.prepare (sr, maxBlock);
     chorus.prepare (sr, maxBlock);
     flanger.prepare (sr, maxBlock);
     delay.prepare (sr, maxBlock);
     reverb.prepare (sr, maxBlock);
+    doubler.prepare (sr);
+    latency = amp.getLatencySamples();
 
     for (auto& r : ramps) r.prepare (sr, false);
     peqRamp.prepare (sr, false);
+    namToneRamp.prepare (sr, false);
     bypassRamp.prepare (sr, true);
     activeOrder = packedOrder.load();
 }
@@ -51,7 +63,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
 void Engine::reset()
 {
     for (int id = 0; id < numFx; ++id) resetPedal (id);
-    amp.reset(); nam.reset(); cab.reset(); peq.reset();
+    amp.reset(); nam.reset(); namTone.reset(); cab.reset(); peq.reset();
 }
 
 void Engine::resetPedal (int id)
@@ -68,6 +80,11 @@ void Engine::resetPedal (int id)
         case fxFlanger:   flanger.reset(); break;
         case fxDelay:     delay.reset(); break;
         case fxReverb:    reverb.reset(); break;
+        case fxWah:       wah[0].reset(); wah[1].reset(); break;
+        case fxWhammy:    whammy[0].reset(); whammy[1].reset(); break;
+        case fxPhaser:    phaser[0].reset(); phaser[1].reset(); break;
+        case fxTremolo:   tremolo[0].reset(); tremolo[1].reset(); break;
+        case fxDoubler:   doubler.reset(); break;
         default: break;
     }
 }
@@ -112,6 +129,11 @@ static bool pedalOn (int id, const EngineParams& p)
         case fxFlanger:   return p.flanger.on;
         case fxDelay:     return p.delay.on;
         case fxReverb:    return p.reverb.on;
+        case fxWah:       return p.wah.on;
+        case fxWhammy:    return p.whammy.on;
+        case fxPhaser:    return p.phaser.on;
+        case fxTremolo:   return p.tremolo.on;
+        case fxDoubler:   return p.doubler.on;
         default:          return false;
     }
 }
@@ -120,6 +142,7 @@ static bool pedalOn (int id, const EngineParams& p)
 void Engine::processPedalMono (int id, int n, const EngineParams& p)
 {
     float* m = mono.getWritePointer (0);
+    const float* key = p.gate.keyFromInput ? gateKey.getReadPointer (0) : nullptr;
     auto reset = [this, id] { resetPedal (id); };
 
     // Stereo effects in a mono slot: duplicate, process, fold back down.
@@ -137,7 +160,7 @@ void Engine::processPedalMono (int id, int n, const EngineParams& p)
     const bool on = pedalOn (id, p);
     switch (id)
     {
-        case fxGate:      runRamp (ramp, on, n, m, nullptr, [&] { gate[0].process (m, n, p.gate); }, reset); break;
+        case fxGate:      runRamp (ramp, on, n, m, nullptr, [&] { gate[0].process (m, n, p.gate, key); }, reset); break;
         case fxOctaver:   runRamp (ramp, on, n, m, nullptr, [&] { octaver[0].process (m, n, p.octaver); }, reset); break;
         case fxDrop:      runRamp (ramp, on, n, m, nullptr, [&] { drop[0].process (m, n, p.drop); }, reset); break;
         case fxComp:      runRamp (ramp, on, n, m, nullptr, [&] { comp[0].process (m, n, p.comp); }, reset); break;
@@ -147,6 +170,11 @@ void Engine::processPedalMono (int id, int n, const EngineParams& p)
         case fxFlanger:   runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { flanger.process (l, r, n, p.flanger); }); }, reset); break;
         case fxDelay:     runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { delay.process (l, r, n, p.delay, p.bpm); }); }, reset); break;
         case fxReverb:    runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { reverb.process (l, r, n, p.reverb); }); }, reset); break;
+        case fxWah:       runRamp (ramp, on, n, m, nullptr, [&] { wah[0].process (m, n, p.wah); }, reset); break;
+        case fxWhammy:    runRamp (ramp, on, n, m, nullptr, [&] { whammy[0].process (m, n, p.whammy); }, reset); break;
+        case fxPhaser:    runRamp (ramp, on, n, m, nullptr, [&] { phaser[0].process (m, n, p.phaser); }, reset); break;
+        case fxTremolo:   runRamp (ramp, on, n, m, nullptr, [&] { tremolo[0].process (m, n, p.tremolo, p.bpm); }, reset); break;
+        case fxDoubler:   runRamp (ramp, on, n, m, nullptr, [&] { viaStereo ([&] (float* l, float* r) { doubler.process (l, r, n, p.doubler); }); }, reset); break;
         default: break;
     }
 }
@@ -156,13 +184,14 @@ void Engine::processPedalStereo (int id, int n, const EngineParams& p)
 {
     float* l = work.getWritePointer (0);
     float* r = work.getWritePointer (1);
+    const float* key = p.gate.keyFromInput ? gateKey.getReadPointer (0) : nullptr;
     auto reset = [this, id] { resetPedal (id); };
 
     auto& ramp = ramps[id];
     const bool on = pedalOn (id, p);
     switch (id)
     {
-        case fxGate:      runRamp (ramp, on, n, l, r, [&] { gate[0].process (l, n, p.gate); gate[1].process (r, n, p.gate); }, reset); break;
+        case fxGate:      runRamp (ramp, on, n, l, r, [&] { gate[0].process (l, n, p.gate, key); gate[1].process (r, n, p.gate, key); }, reset); break;
         case fxOctaver:   runRamp (ramp, on, n, l, r, [&] { octaver[0].process (l, n, p.octaver); octaver[1].process (r, n, p.octaver); }, reset); break;
         case fxDrop:      runRamp (ramp, on, n, l, r, [&] { drop[0].process (l, n, p.drop); drop[1].process (r, n, p.drop); }, reset); break;
         case fxComp:      runRamp (ramp, on, n, l, r, [&] { comp[0].process (l, n, p.comp); comp[1].process (r, n, p.comp); }, reset); break;
@@ -172,13 +201,38 @@ void Engine::processPedalStereo (int id, int n, const EngineParams& p)
         case fxFlanger:   runRamp (ramp, on, n, l, r, [&] { flanger.process (l, r, n, p.flanger); }, reset); break;
         case fxDelay:     runRamp (ramp, on, n, l, r, [&] { delay.process (l, r, n, p.delay, p.bpm); }, reset); break;
         case fxReverb:    runRamp (ramp, on, n, l, r, [&] { reverb.process (l, r, n, p.reverb); }, reset); break;
+        case fxWah:       runRamp (ramp, on, n, l, r, [&] { wah[0].process (l, n, p.wah); wah[1].process (r, n, p.wah); }, reset); break;
+        case fxWhammy:    runRamp (ramp, on, n, l, r, [&] { whammy[0].process (l, n, p.whammy); whammy[1].process (r, n, p.whammy); }, reset); break;
+        case fxPhaser:    runRamp (ramp, on, n, l, r, [&] { phaser[0].process (l, n, p.phaser); phaser[1].process (r, n, p.phaser); }, reset); break;
+        case fxTremolo:   runRamp (ramp, on, n, l, r, [&] { tremolo[0].process (l, n, p.tremolo, p.bpm); tremolo[1].process (r, n, p.tremolo, p.bpm); }, reset); break;
+        case fxDoubler:   runRamp (ramp, on, n, l, r, [&] { doubler.process (l, r, n, p.doubler); }, reset); break;
         default: break;
     }
+}
+
+float Engine::namCalibrationDb (const EngineParams& p, const NamAmp& nam) noexcept
+{
+    if (! p.namCalibrate || ! nam.hasInputLevel())
+        return 0.0f;
+    return juce::jlimit (-24.0f, 24.0f, p.namInterfaceDbu - (float) nam.getInputLevelDbu());
+}
+
+int Engine::computeLatency (const EngineParams& p) const noexcept
+{
+    int total = p.useNam && nam.hasModel() ? nam.getLatencySamples() : amp.getLatencySamples();
+    // Drop tune is fully wet, so its delay is worth compensating. The octaver isn't: its dry
+    // signal would end up early instead.
+    if (p.drop.on && p.drop.semitones != 0)
+        total += drop[0].getLatencySamples();
+    if (p.whammy.on && p.whammy.mix > 0.5f) // mostly wet: compensate like drop tune
+        total += whammy[0].getLatencySamples();
+    return juce::jlimit (0, latencyLineSize - 1, total);
 }
 
 void Engine::processAmpBlock (int n, const EngineParams& p)
 {
     float* m = mono.getWritePointer (0);
+    const float namInDb = p.namInDb + namCalibrationDb (p, nam);
 
     // ---- amp: DSP model or NAM capture, crossfaded when switching
     namMix.setTargetValue (p.useNam && nam.hasModel() ? 1.0f : 0.0f);
@@ -186,7 +240,7 @@ void Engine::processAmpBlock (int n, const EngineParams& p)
     {
         float* d = dry.getWritePointer (0);
         std::copy (m, m + n, d);
-        if (! nam.process (m, n, p.namInDb, p.namOutDb))
+        if (! nam.process (m, n, namInDb, p.namOutDb))
         {
             std::copy (d, d + n, m);
             amp.process (m, n, p.amp);
@@ -201,7 +255,7 @@ void Engine::processAmpBlock (int n, const EngineParams& p)
         float* nm = namScratch.getWritePointer (0);
         std::copy (m, m + n, nm);
         amp.process (m, n, p.amp);
-        if (! nam.process (nm, n, p.namInDb, p.namOutDb))
+        if (! nam.process (nm, n, namInDb, p.namOutDb))
             std::copy (m, m + n, nm);
         for (int i = 0; i < n; ++i)
         {
@@ -209,6 +263,10 @@ void Engine::processAmpBlock (int n, const EngineParams& p)
             m[i] += k * (nm[i] - m[i]);
         }
     }
+
+    // ---- optional tone controls after the capture (only while the capture is playing)
+    runRamp (namToneRamp, p.namTone.on && p.useNam && nam.hasModel(), n, m, nullptr,
+             [&] { namTone.process (m, n, p.namTone); }, [&] { namTone.reset(); });
 
     // ---- cabinet (mono -> stereo), then the post EQ
     float* l = work.getWritePointer (0);
@@ -241,6 +299,18 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const EngineParams& p)
         float* sub[2] = { chans[0] + start, chans[1] + start };
         processChunk (sub, numCh, n, p);
     }
+
+    // Tuner mute (also silences the bypassed signal: the point is to tune quietly).
+    muteGain.setTargetValue (p.mute ? 0.0f : 1.0f);
+    if (muteGain.isSmoothing() || p.mute)
+    {
+        for (int i = 0; i < total; ++i)
+        {
+            const float g = muteGain.getNextValue();
+            for (int c = 0; c < std::min (numCh, 2); ++c)
+                buffer.getWritePointer (c)[i] *= g;
+        }
+    }
 }
 
 void Engine::processChunk (float* const* io, int numChannels, int n, const EngineParams& p)
@@ -251,9 +321,19 @@ void Engine::processChunk (float* const* io, int numChannels, int n, const Engin
     const float* inL = io[0];
     const float* inR = numChannels > 1 ? io[1] : io[0];
 
-    // ---- latency-aligned dry copy for host bypass
+    // ---- tuner: reads the selected input, before anything else (works while bypassed too)
+    if (tunerEnabled.load (std::memory_order_relaxed))
     {
-        const int lat = juce::jlimit (0, 1000, getLatencySamples());
+        float* t = fxTmp.getWritePointer (0);
+        for (int i = 0; i < n; ++i)
+            t[i] = p.inputMode == 1 ? inR[i] : p.inputMode == 2 ? 0.5f * (inL[i] + inR[i]) : inL[i];
+        tunerTap.push (t, n);
+    }
+
+    // ---- latency-aligned dry copy for host bypass
+    const int lat = computeLatency (p);
+    latency.store (lat, std::memory_order_relaxed);
+    {
         const int size = (int) latencyLine[0].size();
         float* bl = bypassDry.getWritePointer (0);
         float* br = bypassDry.getWritePointer (1);
@@ -291,6 +371,8 @@ void Engine::processChunk (float* const* io, int numChannels, int n, const Engin
         inPk = std::max (inPk, std::abs (m[i]));
     }
     inputPeak = std::max (inPk, inputPeak.load() * 0.9f);
+    if (p.gate.keyFromInput)
+        std::copy (m, m + n, gateKey.getWritePointer (0)); // the gate's sidechain: the guitar as it came in
 
     // ---- the chain, in the user's order
     const auto order = ChainOrder::unpack (activeOrder);

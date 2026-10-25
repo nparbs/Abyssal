@@ -12,21 +12,25 @@ enum FxId : int
 {
     fxGate = 0, fxOctaver, fxDrop, fxComp, fxOverdrive, fxGEQ,
     fxChorus, fxFlanger, fxDelay, fxReverb,
+    fxWah, fxWhammy, fxPhaser, fxTremolo, fxDoubler,
     numFx,
     fxAmpBlock = numFx
 };
 
 constexpr int chainLength = numFx + 1;
+static_assert (chainLength <= 16, "ChainOrder packs 16 four-bit slots into 64 bits");
 
 inline const char* fxKey (int id)
 {
-    static const char* keys[] = { "gate", "oct", "drop", "comp", "od", "geq", "cho", "fl", "dly", "rev", "amp" };
+    static const char* keys[] = { "gate", "oct", "drop", "comp", "od", "geq", "cho", "fl", "dly", "rev",
+                                  "wah", "wham", "pha", "trem", "dbl", "amp" };
     return keys[juce::jlimit (0, chainLength - 1, id)];
 }
 
 inline const char* fxShortName (int id)
 {
-    static const char* names[] = { "GATE", "OCT", "DROP", "COMP", "OD", "GEQ", "CHORUS", "FLANGER", "DELAY", "REVERB", "AMP" };
+    static const char* names[] = { "GATE", "OCT", "DROP", "COMP", "OD", "GEQ", "CHORUS", "FLANGER", "DELAY", "REVERB",
+                                   "WAH", "WHAMMY", "PHASER", "TREMOLO", "DOUBLER", "AMP" };
     return names[juce::jlimit (0, chainLength - 1, id)];
 }
 
@@ -37,8 +41,8 @@ struct ChainOrder
 
     static ChainOrder defaultOrder()
     {
-        return { { fxGate, fxOctaver, fxDrop, fxComp, fxOverdrive, fxGEQ, fxAmpBlock,
-                   fxChorus, fxFlanger, fxDelay, fxReverb } };
+        return { { fxWah, fxWhammy, fxGate, fxOctaver, fxDrop, fxComp, fxOverdrive, fxGEQ, fxAmpBlock,
+                   fxPhaser, fxChorus, fxFlanger, fxTremolo, fxDoubler, fxDelay, fxReverb } };
     }
 
     bool operator== (const ChainOrder& o) const { return slots == o.slots; }
@@ -117,13 +121,24 @@ struct ChainOrder
         if (! list.contains ((int) fxAmpBlock))
             return defaultOrder();
 
+        // Pedals the text doesn't mention (added in a later version) go in at their default spot:
+        // just after the nearest pedal that precedes them in the default order, on the same side.
         const auto def = defaultOrder();
-        for (int id = 0; id < numFx; ++id)
-            if (! list.contains (id))
-            {
-                if (def.isPreAmp (id)) list.insert (list.indexOf ((int) fxAmpBlock), id);
-                else                   list.add (id);
-            }
+        for (int i = 0; i < chainLength; ++i)
+        {
+            const int id = def.slots[(size_t) i];
+            if (list.contains (id))
+                continue;
+            int at = def.isPreAmp (id) ? 0 : list.indexOf ((int) fxAmpBlock) + 1;
+            for (int j = i - 1; j >= 0; --j)
+                if (const int k = list.indexOf (def.slots[(size_t) j]);
+                    k >= 0 && def.slots[(size_t) j] != fxAmpBlock && (k < list.indexOf ((int) fxAmpBlock)) == def.isPreAmp (id))
+                {
+                    at = k + 1;
+                    break;
+                }
+            list.insert (at, id);
+        }
 
         ChainOrder o;
         for (int i = 0; i < chainLength; ++i)

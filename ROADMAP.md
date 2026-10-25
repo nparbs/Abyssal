@@ -93,40 +93,55 @@
 
 ---
 
-## Next — v0.3: playability
+## Done — v0.3: playability (October 2026)
 
-- [ ] TONE3000: creator avatars + TONE3000 logo artwork per their design guidelines; favourite/unfavourite
-      from the panel; paging for long Favorites lists
+- [x] Separate knob settings for each amp channel; v0.2 projects/presets migrate onto the channel they used
+- [x] Built-in chromatic tuner (YIN, B0–E5 within 1 cent) with output mute and A4 reference
+- [x] Gate key from the guitar input (pairs with a post-amp gate)
+- [x] Input level calibration for NAM captures (interface dBu vs. the capture's recorded level)
+- [x] Latency reporting follows the NAM resampler and drop tune; bypass dry path aligned to match
+- [x] Preset save dialog with name / category / notes; user categories; rename / edit / delete from the browser
+- [x] A/B compare snapshots, saved with the project
+- [x] Load NAM captures on a background thread
+- [x] Undo/redo for parameter changes, preset loads and pedal order (Ctrl+Z / Ctrl+Y)
+- [x] TONE3000: creator avatars, favourite/unfavourite from the panel, paging for long lists
+- [x] `AbyssalRender --dsptest`
+
+Still open from v0.3:
 - [ ] **Tune by ear with a real guitar.** The voicings were set by measurement only.
-- [ ] Separate knob settings for each amp channel (currently shared)
-- [ ] Built-in tuner (with output mute)
-- [ ] Gate key options: detect from the input, apply after the amp
-- [ ] Input level calibration for NAM captures (match interface headroom)
-- [ ] Report the extra latency from the NAM resampler and pitch effects to the host
-- [ ] Preset save dialog with name / category / notes; rename and delete from the browser
-- [ ] A/B compare snapshots
-- [x] Load NAM captures on a background thread (large models briefly freeze the UI today)
-- [ ] Undo/redo for parameter changes
+- [ ] TONE3000 logo artwork per their brand guidelines (needs their official asset pack)
 
-## v0.4: tone depth
-- [ ] Fourth amp voicing: a tight, saturated modern lead ("Abyss" channel)
-- [ ] Passive tone stack with interacting controls, replacing the independent biquads
-- [ ] Power amp voicing switch (EL34 / 6L6 style)
-- [ ] Better pitch shifter for the octaver and drop tune (polyphonic, lower latency)
-- [ ] More built-in cabs and mics (dynamic, ribbon, condenser) with mic distance control
-- [ ] IR time alignment between the two cab slots (phase)
-- [ ] Optional tone controls after a NAM capture
+## Done — v0.4: tone depth (October 2026)
 
-## v0.5: more FX
-- [ ] Phaser, tremolo, wah (auto and expression)
-- [ ] Pitch-shift whammy pedal
-- [ ] Shimmer and plate reverb modes
-- [ ] Tape and analog delay modes, plus tap tempo
-- [ ] Doubler for stereo width on rhythm parts
+- [x] Fourth amp voicing: "Abyss" channel (tight, saturated modern lead) with its own faceplate
+- [x] Passive tone stack with interacting controls, solved from the circuit (nodal analysis → exact 3rd-order
+      transfer function → bilinear transform), per-channel component values; factory presets re-levelled
+- [x] Power amp voicing switch (EL34 / 6L6)
+- [x] Better pitch shifter: correlation-chosen splice points. On-pitch energy ~99% on chords (was 85–95%),
+      delay follows the note (5–9 ms single notes, ~15 ms chords; was a fixed 17.5 / 27.5 ms)
+- [x] Three more built-in cabs, mic types (dynamic / ribbon / condenser) and mic distance per slot
+- [x] IR time alignment between the two cab slots (onset-based), plus polarity invert
+- [x] Optional tone controls after a NAM capture
+- [x] State migration v4 (cab source indices), defaults for parameters missing from older states
+
+Not done: a truly polyphonic shifter (phase vocoder) would cost more latency than v0.3 had, which the
+"lower latency" goal rules out.
+
+## Done — v0.5: more FX (October 2026)
+
+- [x] Phaser (4/8 stage, feedback, stereo offset post-amp), tremolo (shape, tempo sync, auto-pan),
+      wah (pedal position for automation / expression, and auto)
+- [x] Whammy pedal (eight intervals, treadle position, harmony mix) on the splice-picking shifter, which
+      now handles big up-shifts too (adaptive crossfade; octave up 18% → 99.8% on-pitch vs v0.3's shifter)
+- [x] Plate (Dattorro-style tank) and shimmer (octave-up feedback) reverb modes; all modes decay at max settings
+- [x] Tape and analog delay modes, plus tap tempo
+- [x] Doubler for stereo width
+- [x] Chain grows to 15 pedals + the amp block; older pedal orders pick up the new pedals in place;
+      delay and reverb pedals are double-width; boards wrap to three rows when needed
 
 ## v1.0: release
 - [ ] MIDI control: program change, CC learn for footswitches
-- [ ] Preset tags (multiple per preset) and user-defined categories
+- [ ] Preset tags (multiple per preset) (user-defined categories arrived in v0.3)
 - [ ] Code signing for the installer and binaries
 - [ ] AU / CLAP formats; macOS build in CI
 - [ ] GitHub Actions: build plus `AbyssalRender` regression check on every push

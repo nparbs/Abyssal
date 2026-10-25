@@ -7,6 +7,27 @@ namespace nam { class DSP; }
 namespace abyssal
 {
 
+struct NamToneParams
+{
+    bool on = false;
+    float bass = 5, mid = 5, treble = 5, presence = 5; // 0..10, 5 = flat
+};
+
+/** Optional Bass / Middle / Treble / Presence after a capture: an active EQ (5 = flat, +-10 dB),
+    since a capture has no tone stack of its own to turn. */
+class NamTone
+{
+public:
+    void prepare (double sampleRate) { sr = sampleRate; cached = {}; cached.bass = -1; reset(); }
+    void reset() noexcept { for (auto& b : bands) b.reset(); }
+    void process (float* data, int n, const NamToneParams& p) noexcept;
+
+private:
+    double sr = 48000;
+    NamToneParams cached;
+    Biquad bands[4];
+};
+
 /** Hosts a Neural Amp Modeler (.nam) capture. Loading happens off the audio thread; the model is
     swapped in under a try-lock. If the host rate differs from the model's training rate the audio
     is streamed through a pair of Lagrange resamplers.
@@ -41,6 +62,16 @@ public:
     /** Records where the loaded model lives (e.g. its library copy). Message thread only. */
     void setModelFile (const juce::File& f) { modelFile = f; }
     double getModelSampleRate() const noexcept { return modelRate.load(); }
+    /** The level (dBu) the capture was made at for a 0 dBFS input, if the file records it. */
+    bool hasInputLevel() const noexcept { return modelHasInputLevel.load(); }
+    double getInputLevelDbu() const noexcept { return modelInputLevel.load(); }
+
+    /** Extra delay added by resampling to and from the model's rate (0 when the rates match). */
+    int getLatencySamples() const noexcept { return latency.load(); }
+
+    /** Test hook: installs a pass-through "model" at the given rate, so the resampling path can be
+        measured on its own. */
+    void installIdentityModel (double modelSampleRate);
 
     /** Returns false if no model was available (caller should use the DSP amp instead). */
     bool process (float* data, int n, float inGainDb, float outGainDb);
@@ -54,6 +85,9 @@ private:
     juce::File modelFile;
     std::atomic<bool> modelLoaded { false };
     std::atomic<double> modelRate { 48000.0 };
+    std::atomic<bool> modelHasInputLevel { false };
+    std::atomic<double> modelInputLevel { 0.0 };
+    std::atomic<int> latency { 0 };
 
     // Written in prepare(); read by prepareModel() on the loader thread.
     std::atomic<double> hostRate { 48000.0 };

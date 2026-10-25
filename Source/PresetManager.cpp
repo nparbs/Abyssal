@@ -44,7 +44,17 @@ void PresetManager::refresh()
     auto files = getUserPresetDirectory().findChildFiles (juce::File::findFiles, true, "*.abyssal");
     files.sort();
     for (auto& f : files)
-        entries.add ({ f.getFileNameWithoutExtension(), userCategory, false, -1, f });
+    {
+        // Only the root element's attributes are needed; presets are small, so a full parse is fine.
+        juce::String category = userCategory, notes;
+        if (auto xml = juce::XmlDocument::parse (f))
+        {
+            category = xml->getStringAttribute ("presetCategory", userCategory).trim();
+            notes = xml->getStringAttribute ("notes");
+            if (category.isEmpty()) category = userCategory;
+        }
+        entries.add ({ f.getFileNameWithoutExtension(), category, false, -1, f, notes });
+    }
 }
 
 int PresetManager::indexOfKey (const juce::String& key) const
@@ -60,10 +70,43 @@ juce::StringArray PresetManager::getFilterCategories() const
     juce::StringArray cats { "All", "Favourites" };
     for (auto& c : getFactoryCategories())
         for (auto& e : entries)
-            if (e.factory && e.category == c) { cats.add (c); break; }
+            if (e.category == c) { cats.add (c); break; }
+
+    juce::StringArray custom;
+    for (auto& e : entries)
+        if (! e.factory && e.category != userCategory && ! cats.contains (e.category))
+            custom.addIfNotAlreadyThere (e.category);
+    custom.sortNatural();
+    cats.addArray (custom);
+
     for (auto& e : entries)
         if (! e.factory) { cats.add (userCategory); break; }
     return cats;
+}
+
+juce::StringArray PresetManager::getSaveCategories() const
+{
+    auto cats = getFactoryCategories();
+    cats.removeString ("Utility");
+    juce::StringArray custom;
+    for (auto& e : entries)
+        if (! e.factory && ! cats.contains (e.category) && e.category != userCategory)
+            custom.addIfNotAlreadyThere (e.category);
+    custom.sortNatural();
+    cats.addArray (custom);
+    cats.add (userCategory);
+    return cats;
+}
+
+void PresetManager::renameFavourite (const juce::String& oldKey, const juce::String& newKey)
+{
+    loadSettings();
+    const int i = favourites.indexOf (oldKey);
+    if (i < 0) return;
+    if (newKey.isEmpty() || favourites.contains (newKey)) favourites.remove (i);
+    else                                                  favourites.set (i, newKey);
+    settings->setValue ("favourites", favourites.joinIntoString ("\n"));
+    settings->saveIfNeeded();
 }
 
 juce::Array<int> PresetManager::filter (const juce::String& category, const juce::String& search) const
@@ -75,10 +118,14 @@ juce::Array<int> PresetManager::filter (const juce::String& category, const juce
     {
         const auto& e = entries.getReference (i);
         if (category == "Favourites" && ! isFavourite (e.key())) continue;
-        if (category != "All" && category != "Favourites" && e.category != category) continue;
+        if (category == userCategory)
+        {
+            if (e.factory) continue;
+        }
+        else if (category != "All" && category != "Favourites" && e.category != category) continue;
 
         bool match = true;
-        const auto hay = (e.name + " " + e.category).toLowerCase();
+        const auto hay = (e.name + " " + e.category + " " + e.notes).toLowerCase();
         for (auto& w : words)
             if (w.isNotEmpty() && ! hay.contains (w)) { match = false; break; }
         if (match) out.add (i);

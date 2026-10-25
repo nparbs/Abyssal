@@ -14,12 +14,9 @@ void drawScrew (juce::Graphics& g, juce::Point<float> c, float r)
 }
 
 //============================================================================== Knob
-Knob::Knob (APVTS& state, const juce::String& paramId, const juce::String& text, juce::Colour accent, bool bipolar)
-    : label (text)
+Knob::Knob (APVTS& s, const juce::String& paramId, const juce::String& text, juce::Colour accent, bool bipolar)
+    : state (s), label (text)
 {
-    param = state.getParameter (paramId);
-    jassert (param != nullptr);
-
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
@@ -30,9 +27,17 @@ Knob::Knob (APVTS& state, const juce::String& paramId, const juce::String& text,
     slider.onValueChange = [this] { repaint(); };
     slider.addMouseListener (this, false);
     addAndMakeVisible (slider);
+    bind (paramId);
+}
 
+void Knob::bind (const juce::String& paramId)
+{
+    param = state.getParameter (paramId);
+    jassert (param != nullptr);
+    attachment.reset(); // detach first so the old parameter isn't touched by the new range
     attachment = std::make_unique<APVTS::SliderAttachment> (state, paramId, slider);
     slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    repaint();
 }
 
 void Knob::resized()
@@ -106,11 +111,17 @@ void Footswitch::paintButton (juce::Graphics& g, bool highlighted, bool down)
 }
 
 //============================================================================== MiniToggle / ChoiceBox
-MiniToggle::MiniToggle (APVTS& state, const juce::String& paramId, const juce::String& text, juce::Colour on)
-    : juce::TextButton (text)
+MiniToggle::MiniToggle (APVTS& s, const juce::String& paramId, const juce::String& text, juce::Colour on)
+    : juce::TextButton (text), state (s)
 {
     setClickingTogglesState (true);
     setColour (juce::TextButton::buttonOnColourId, on);
+    bind (paramId);
+}
+
+void MiniToggle::bind (const juce::String& paramId)
+{
+    attachment.reset();
     attachment = std::make_unique<APVTS::ButtonAttachment> (state, paramId, *this);
 }
 
@@ -204,11 +215,16 @@ void Pedal::addChoice (const juce::String& paramId)
     addAndMakeVisible (minis.add (new ChoiceBox (state, paramId)));
 }
 
+void Pedal::addMini (juce::Component* c)
+{
+    addAndMakeVisible (minis.add (c));
+}
+
 juce::Rectangle<int> Pedal::getContentArea() const
 {
     auto r = getLocalBounds().reduced (16, 18);
     r.removeFromBottom (76 + 30);
-    if (! minis.isEmpty()) r.removeFromBottom (30);
+    if (! minis.isEmpty()) r.removeFromBottom (minis.size() > 3 ? 60 : 30);
     return r;
 }
 
@@ -220,11 +236,23 @@ void Pedal::resized()
 
     if (! minis.isEmpty())
     {
-        auto row = r.removeFromBottom (26);
-        r.removeFromBottom (4);
-        const int w = row.getWidth() / minis.size();
-        for (auto* m : minis)
-            m->setBounds (row.removeFromLeft (w).reduced (2, 0));
+        // Up to three per row; a fourth or fifth control starts a second row above.
+        const int rows = minis.size() > 3 ? 2 : 1;
+        const int perRow = (minis.size() + rows - 1) / rows;
+        juce::Rectangle<int> rowAreas[2];
+        for (int i = rows; --i >= 0;)
+        {
+            rowAreas[i] = r.removeFromBottom (26);
+            r.removeFromBottom (4);
+        }
+        for (int row = 0; row < rows; ++row)
+        {
+            const int first = row * perRow, count = std::min (perRow, minis.size() - first);
+            auto line = rowAreas[row];
+            const int w = line.getWidth() / std::max (1, count);
+            for (int i = 0; i < count; ++i)
+                minis[first + i]->setBounds (line.removeFromLeft (w).reduced (2, 0));
+        }
     }
 
     if (customLayout)
@@ -340,11 +368,38 @@ GraphicEQPedal::GraphicEQPedal (APVTS& s, const juce::String& onId, const juce::
 }
 
 //============================================================================== DelayPedal
-DelayPedal::DelayPedal (APVTS& s, const juce::String& onId, const juce::String& syncParam, juce::Colour b, juce::Colour a)
-    : Pedal (s, "Delay", onId, b, a)
+DelayPedal::DelayPedal (APVTS& s, const juce::String& onId, const juce::String& syncParam, const juce::String& timeParam,
+                        juce::Colour b, juce::Colour a)
+    : Pedal (s, "Delay", onId, b, a), syncId (syncParam), timeId (timeParam)
 {
     sync = s.getRawParameterValue (syncParam);
     startTimerHz (5);
+}
+
+float DelayPedal::tap (double nowMs)
+{
+    // A pause of more than two seconds starts a new count.
+    if (! taps.isEmpty() && nowMs - taps.getLast() > 2000.0)
+        taps.clearQuick();
+    taps.add (nowMs);
+    while (taps.size() > 5)
+        taps.remove (0);
+    if (taps.size() < 2)
+        return 0.0f;
+
+    const float ms = juce::jlimit (10.0f, 2000.0f, (float) ((taps.getLast() - taps.getFirst()) / (taps.size() - 1)));
+    auto set = [this] (const juce::String& id, float value)
+    {
+        if (auto* p = state.getParameter (id))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+            p->endChangeGesture();
+        }
+    };
+    set (syncId, 0.0f);
+    set (timeId, ms);
+    return ms;
 }
 
 void DelayPedal::timerCallback()

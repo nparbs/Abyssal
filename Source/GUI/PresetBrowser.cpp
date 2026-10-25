@@ -48,6 +48,8 @@ PresetBrowser::PresetBrowser (AbyssalProcessor& p) : proc (p)
     list.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (list);
 
+    addChildComponent (dialog);
+
     proc.presetChanged.addChangeListener (this);
     rebuildCategories();
     applyFilter();
@@ -94,11 +96,18 @@ void PresetBrowser::applyFilter()
     list.repaint();
 }
 
-void PresetBrowser::open()
+void PresetBrowser::refreshAll()
 {
     proc.presets.refresh();
+    if (! proc.presets.getFilterCategories().contains (category))
+        category = "All";
     rebuildCategories();
     applyFilter();
+}
+
+void PresetBrowser::open()
+{
+    refreshAll();
     setVisible (true);
     toFront (true);
     search.grabKeyboardFocus();
@@ -106,6 +115,7 @@ void PresetBrowser::open()
 
 void PresetBrowser::close()
 {
+    dialog.dismiss();
     setVisible (false);
     if (onClose) onClose();
 }
@@ -142,7 +152,19 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int
 
     g.setColour (colours::text);
     g.setFont (font (15.0f, current));
-    g.drawText (e.name, 40, 0, width - 300, height, juce::Justification::centredLeft);
+    const int nameRight = width - 260;
+    g.drawText (e.name, 40, 0, nameRight - 40, height, juce::Justification::centredLeft);
+    if (e.notes.isNotEmpty())
+    {
+        const int nameW = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), e.name)) + 16;
+        if (40 + nameW < nameRight - 40)
+        {
+            g.setColour (colours::textDim);
+            g.setFont (font (12.5f));
+            g.drawText (e.notes.replaceCharacters ("\r\n", "  "), 40 + nameW, 0, nameRight - 40 - nameW, height,
+                        juce::Justification::centredLeft, true);
+        }
+    }
 
     g.setColour (colours::textDim);
     g.setFont (font (12.0f, true));
@@ -162,6 +184,12 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
         return;
     const auto& entry = proc.presets.getEntries().getReference (visible[row]);
 
+    if (e.mods.isPopupMenu())
+    {
+        showRowMenu (row);
+        return;
+    }
+
     if (e.x < 36) // star column toggles the favourite instead of loading
     {
         proc.presets.setFavourite (entry.key(), ! proc.presets.isFavourite (entry.key()));
@@ -170,6 +198,61 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
         return;
     }
     loadRow (row);
+}
+
+void PresetBrowser::showRowMenu (int row)
+{
+    const auto entry = proc.presets.getEntries()[visible[row]];
+    const bool fav = proc.presets.isFavourite (entry.key());
+
+    juce::PopupMenu m;
+    m.addSectionHeader (entry.name);
+    m.addItem (1, "Load");
+    m.addItem (2, fav ? "Remove from favourites" : "Add to favourites");
+    if (! entry.factory)
+    {
+        m.addSeparator();
+        m.addItem (3, "Rename / edit details...");
+        m.addItem (4, "Delete...");
+        m.addItem (5, "Show in Explorer");
+    }
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&list).withMousePosition(),
+                     [this, entry, fav, row] (int r)
+    {
+        switch (r)
+        {
+            case 1: loadRow (row); break;
+            case 2:
+                proc.presets.setFavourite (entry.key(), ! fav);
+                if (category == "Favourites") applyFilter();
+                list.repaint();
+                break;
+            case 3:
+                dialog.show ("EDIT PRESET", "SAVE", { entry.name, entry.category, entry.notes }, proc.presets.getSaveCategories(),
+                             [this, entry] (const PresetDialog::Details& d)
+                {
+                    const auto err = proc.editUserPreset (entry, d.name, d.category, d.notes);
+                    if (err.isEmpty()) refreshAll();
+                    return err;
+                });
+                break;
+            case 4:
+            {
+                auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, "Delete preset",
+                                                                             "Move \"" + entry.name + "\" to the Recycle Bin?",
+                                                                             "Delete", "Cancel", this);
+                juce::AlertWindow::showAsync (options, [this, entry] (int result)
+                {
+                    if (result == 1 && proc.deleteUserPreset (entry))
+                        refreshAll();
+                });
+                break;
+            }
+            case 5: entry.file.revealToUser(); break;
+            default: break;
+        }
+    });
 }
 
 void PresetBrowser::listBoxItemDoubleClicked (int row, const juce::MouseEvent& e)
@@ -225,7 +308,7 @@ void PresetBrowser::paint (juce::Graphics& g)
     g.setFont (font (11.0f, true));
     g.drawText ("CATEGORY", inner.withTrimmedTop (10).removeFromTop (16).removeFromLeft (180), juce::Justification::centredLeft);
     g.setFont (font (12.0f));
-    g.drawText ("Click or use the arrow keys to audition  -  Enter / double-click to close  -  click the star to favourite",
+    g.drawText ("Click or arrow keys to audition  -  Enter / double-click to close  -  star to favourite  -  right-click to rename or delete",
                 panelBounds().reduced (20, 10).removeFromBottom (20), juce::Justification::centredRight);
 }
 
@@ -247,6 +330,7 @@ void PresetBrowser::resized()
     }
     inner.removeFromLeft (16);
     list.setBounds (inner);
+    dialog.setBounds (getLocalBounds());
 }
 
 } // namespace abyssal::ui

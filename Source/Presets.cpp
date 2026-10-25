@@ -18,7 +18,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ------------------------------------------------------------------ Djent
         { "Modern Djent", "Djent", {},
-          { { gateThresh, -54 }, { gateRelease, 35 },
+          { { outGain, 0.3f }, { gateThresh, -54 }, { gateRelease, 35 },
             { odOn, 1 }, { odDrive, 0 }, { odTone, 6.5f }, { odLevel, 10 },
             { ampChannel, 2 }, { ampGain, 5.5f }, { ampBass, 5 }, { ampMid, 6 }, { ampTreble, 6.5f },
             { ampPresence, 6 }, { ampDepth, 3 }, { ampTight, 1 },
@@ -28,7 +28,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { peq (2, "freq"), 2600 }, { peq (2, "gain"), 1.5f } } },
 
         { "Prog Chug", "Djent", {},
-          { { outGain, -1.5f }, { gateThresh, -50 }, { gateRelease, 25 },
+          { { outGain, -1.2f }, { gateThresh, -50 }, { gateRelease, 25 },
             { compOn, 1 }, { compThresh, -20 }, { compRatio, 3 }, { compAttack, 15 }, { compLevel, 4 },
             { odOn, 1 }, { odDrive, 0.5f }, { odTone, 7 }, { odLevel, 9.5f },
             { ampChannel, 2 }, { ampGain, 5 }, { ampBass, 4.5f }, { ampMid, 6.5f }, { ampTreble, 6 },
@@ -60,7 +60,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { peqHpf, 85 }, { peqLpf, 10500 } } },
 
         { "Bay Area Crunch", "Thrash", {},
-          { { gateThresh, -60 }, { gateRelease, 60 },
+          { { outGain, -1.1f }, { gateThresh, -60 }, { gateRelease, 60 },
             { odOn, 1 }, { odDrive, 2 }, { odTone, 6.5f }, { odLevel, 7.5f },
             { ampChannel, 1 }, { ampGain, 8.5f }, { ampBass, 6.5f }, { ampMid, 3 }, { ampTreble, 7.5f },
             { ampPresence, 6 }, { ampDepth, 4 }, { ampTight, 1 },
@@ -70,7 +70,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ------------------------------------------------------------------ Death
         { "Death Metal Wall", "Death", {},
-          { { outGain, -3.0f }, { gateThresh, -52 }, { gateRelease, 30 },
+          { { outGain, -2.6f }, { gateThresh, -52 }, { gateRelease, 30 },
             { odOn, 1 }, { odDrive, 0.5f }, { odTone, 5.5f }, { odLevel, 9.5f },
             { ampChannel, 2 }, { ampGain, 8.5f }, { ampBass, 6.5f }, { ampMid, 4 }, { ampTreble, 6 },
             { ampPresence, 5.5f }, { ampDepth, 6 }, { ampMaster, 6 },
@@ -81,7 +81,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // The graphic EQ goes before a cranked overdrive: the classic Swedish "chainsaw" pedal trick.
         { "Swedish Chainsaw", "Death", "gate,geq,od,oct,drop,comp,amp,cho,fl,dly,rev",
-          { { gateThresh, -52 }, { gateRelease, 40 },
+          { { outGain, -0.3f }, { gateThresh, -52 }, { gateRelease, 40 },
             { geqOn, 1 }, { geqBand (0), 4 }, { geqBand (1), 8 }, { geqBand (2), 4 }, { geqBand (3), -2 },
             { geqBand (4), 8 }, { geqBand (5), 10 }, { geqBand (6), 8 }, { geqBand (7), 4 }, { geqLevel, -6 },
             { odOn, 1 }, { odDrive, 7 }, { odTone, 7 }, { odLevel, 5 },
@@ -103,7 +103,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
         // ------------------------------------------------------------------ Doom
         // The octaver sits after the amp so the sub tracks a cleaner, already-saturated signal.
         { "Doom Sludge", "Doom", "gate,drop,comp,od,geq,amp,oct,cho,fl,dly,rev",
-          { { outGain, -4.0f }, { gateThresh, -60 }, { gateRelease, 150 },
+          { { outGain, -3.7f }, { gateThresh, -60 }, { gateRelease, 150 },
             { octOn, 1 }, { octDry, 1 }, { octDown1, 0.35f }, { octDown2, 0 },
             { odOn, 1 }, { odDrive, 4 }, { odTone, 4 }, { odLevel, 7 },
             { ampChannel, 1 }, { ampGain, 9 }, { ampBass, 8 }, { ampMid, 6 }, { ampTreble, 4 },
@@ -114,7 +114,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ------------------------------------------------------------------ Nu Metal
         { "Nu Metal Bounce", "Nu Metal", {},
-          { { outGain, 5.0f }, { gateThresh, -50 }, { gateRelease, 25 },
+          { { outGain, 4.6f }, { gateThresh, -50 }, { gateRelease, 25 },
             { odOn, 0 },
             { ampChannel, 2 }, { ampGain, 6.5f }, { ampBass, 7 }, { ampMid, 2.5f }, { ampTreble, 6.5f },
             { ampPresence, 6 }, { ampDepth, 6 }, { ampTight, 1 },
@@ -124,7 +124,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ------------------------------------------------------------------ Lead
         { "Searing Lead", "Lead", {},
-          { { outGain, -1.5f }, { gateThresh, -66 }, { gateRelease, 120 },
+          { { outGain, -0.4f }, { gateThresh, -66 }, { gateRelease, 120 },
             { odOn, 1 }, { odDrive, 2.5f }, { odTone, 5.5f }, { odLevel, 7.5f },
             { ampChannel, 2 }, { ampGain, 7.5f }, { ampBass, 4.5f }, { ampMid, 6.5f }, { ampTreble, 5.5f },
             { ampPresence, 5 }, { ampDepth, 3 },
@@ -135,7 +135,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
             { revOn, 1 }, { revSize, 0.6f }, { revMix, 0.18f } } },
 
         { "Shred Lead", "Lead", {},
-          { { outGain, 1.0f }, { gateThresh, -64 }, { gateRelease, 80 },
+          { { outGain, 1.5f }, { gateThresh, -64 }, { gateRelease, 80 },
             { compOn, 1 }, { compThresh, -22 }, { compRatio, 3 }, { compLevel, 4 },
             { odOn, 1 }, { odDrive, 1.5f }, { odTone, 6 }, { odLevel, 9 },
             { ampChannel, 2 }, { ampGain, 7 }, { ampBass, 4.5f }, { ampMid, 7 }, { ampTreble, 6 },
@@ -147,7 +147,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // Flanger in front of the amp, like a pedal on the floor.
         { "Jet Flange Lead", "Lead", "gate,oct,drop,comp,od,fl,geq,amp,cho,dly,rev",
-          { { outGain, 1.0f }, { gateThresh, -66 },
+          { { outGain, 1.5f }, { gateThresh, -66 },
             { odOn, 1 }, { odDrive, 2 }, { odLevel, 8 },
             { ampChannel, 2 }, { ampGain, 7 }, { ampMid, 6 },
             { cab (0, "src"), 0 },
@@ -156,7 +156,7 @@ const std::vector<FactoryPreset>& getFactoryPresets()
 
         // ------------------------------------------------------------------ Clean
         { "Ambient Clean", "Clean", "comp,gate,oct,drop,od,geq,amp,cho,fl,dly,rev",
-          { { outGain, 1.0f }, { gateThresh, -72 }, { gateRelease, 150 },
+          { { outGain, 5.0f }, { gateThresh, -72 }, { gateRelease, 150 },
             { compOn, 1 }, { compThresh, -26 }, { compRatio, 4 }, { compLevel, 7 },
             { odOn, 0 },
             { ampChannel, 0 }, { ampGain, 4 }, { ampBass, 5 }, { ampMid, 5 }, { ampTreble, 6 },
@@ -176,9 +176,17 @@ void applyFactoryPreset (juce::AudioProcessorValueTreeState& apvts, const Factor
             if (! isGlobalParameter (rp->paramID))
                 rp->setValueNotifyingHost (rp->getDefaultValue());
 
+    // Presets list the faceplate under the Lead ids; it belongs to whichever channel they select.
+    int channel = 2;
     for (const auto& [id, value] : preset.values)
-        if (auto* rp = apvts.getParameter (id))
+        if (id == ids::ampChannel) channel = (int) value;
+
+    for (const auto& [id, value] : preset.values)
+    {
+        const auto* knob = ids::ampKnobKeyOf (id);
+        if (auto* rp = apvts.getParameter (knob != nullptr ? ids::ampKnob (channel, knob) : id))
             rp->setValueNotifyingHost (rp->convertTo0to1 (value));
+    }
 }
 
 } // namespace abyssal

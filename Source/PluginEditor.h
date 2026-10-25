@@ -4,6 +4,8 @@
 #include "GUI/Pages.h"
 #include "GUI/PresetBrowser.h"
 #include "GUI/Tone3000Panel.h"
+#include "GUI/TunerPanel.h"
+#include "GUI/PresetDialog.h"
 
 /** Shows the current preset's name and category; clicking opens the browser. */
 class PresetDisplay : public juce::Button
@@ -12,6 +14,17 @@ public:
     PresetDisplay() : juce::Button ("preset") {}
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
     juce::String name { "Init" }, category { "Utility" };
+};
+
+/** Small square button that draws an undo / redo arrow. */
+class ArrowButton : public juce::Button
+{
+public:
+    explicit ArrowButton (bool redoArrow) : juce::Button (redoArrow ? "redo" : "undo"), redo (redoArrow) {}
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+
+private:
+    bool redo;
 };
 
 /** Everything inside the plugin window, laid out at a fixed 1180 x 800 and scaled as a whole. */
@@ -27,16 +40,25 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void mouseDown (const juce::MouseEvent&) override;
 
 private:
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshPresetInfo(); }
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&) override;
     void showPage (int index);
     void refreshPresetInfo();
+    void refreshUndoButtons();
+    void refreshSnapshotButtons();
     void stepPreset (int delta);
+    void openSaveDialog();
+    void showSnapshotMenu (int slot);
 
     AbyssalProcessor& proc;
 
+    ArrowButton undoButton { false }, redoButton { true };
+    juce::TextButton snapA { "A" }, snapB { "B" }, tunerButton { "TUNER" };
+    bool snapMenuShown = false; // a right-click on A / B opens the menu instead of switching
     juce::TextButton prevPreset { "<" }, nextPreset { ">" }, savePreset { "SAVE" }, loadPreset { "LOAD" };
     PresetDisplay presetDisplay;
     abyssal::ui::StarButton favourite;
@@ -53,6 +75,8 @@ private:
     abyssal::ui::BoardPage postBoard;
     abyssal::ui::PresetBrowser browser;
     abyssal::ui::Tone3000Panel tone3000;
+    abyssal::ui::TunerPanel tuner;
+    abyssal::ui::PresetDialog saveDialog;
     std::array<juce::Component*, 5> pages {};
 
     std::unique_ptr<juce::FileChooser> chooser;

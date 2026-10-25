@@ -16,6 +16,7 @@ namespace colours
     const juce::Colour accent    { 0xffe8432a }; // molten red
     const juce::Colour accentAlt { 0xff36c6ff }; // cold cyan
     const juce::Colour amber     { 0xffffa726 };
+    const juce::Colour abyss     { 0xffa86bff }; // Abyss channel violet
     const juce::Colour ledOff    { 0xff3a1410 };
 }
 

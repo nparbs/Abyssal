@@ -15,13 +15,43 @@ void PresetDisplay::paintButton (juce::Graphics& g, bool highlighted, bool)
     g.setColour (highlighted ? colours::accent.withAlpha (0.7f) : colours::outline);
     g.drawRoundedRectangle (r, 5.0f, 1.0f);
 
-    auto area = getLocalBounds().reduced (12, 0);
+    auto area = getLocalBounds().reduced (10, 2);
     g.setColour (colours::textDim);
-    g.setFont (font (10.5f, true));
-    g.drawText (category.toUpperCase(), area.removeFromRight (90), juce::Justification::centredRight);
+    g.setFont (font (9.5f, true));
+    g.drawText (category.toUpperCase(), area.removeFromTop (12), juce::Justification::centredLeft);
     g.setColour (colours::text);
-    g.setFont (font (16.0f, true));
-    g.drawFittedText (name, area, juce::Justification::centredLeft, 1, 0.8f);
+    g.setFont (font (15.0f, true));
+    g.drawFittedText (name, area, juce::Justification::centredLeft, 1, 0.75f);
+}
+
+//==============================================================================
+void ArrowButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (colours::panelHi.brighter (highlighted && isEnabled() ? 0.08f : 0.0f));
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (colours::outline);
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+
+    // A hooked arrow: an arc that ends in an arrowhead pointing back (undo) or forward (redo).
+    auto a = r.reduced (8.0f).translated (0.0f, down ? 1.0f : 0.0f);
+    const float cx = a.getCentreX(), cy = a.getCentreY() + 1.0f, rad = a.getWidth() * 0.42f;
+    juce::Path arc;
+    arc.addCentredArc (cx, cy, rad, rad, 0.0f, -juce::MathConstants<float>::halfPi * 1.25f, juce::MathConstants<float>::halfPi * 0.9f, true);
+    juce::Path head;
+    const float hx = cx - rad * std::sin (juce::MathConstants<float>::halfPi * 1.25f);
+    const float hy = cy - rad * std::cos (juce::MathConstants<float>::halfPi * 1.25f);
+    head.addTriangle (hx - 5.0f, hy - 1.0f, hx + 3.0f, hy - 6.0f, hx + 2.5f, hy + 3.5f);
+    if (redo)
+    {
+        const auto flip = juce::AffineTransform::scale (-1.0f, 1.0f, cx, cy);
+        arc.applyTransform (flip);
+        head.applyTransform (flip);
+    }
+    const auto c = isEnabled() ? (highlighted ? colours::text : colours::textDim) : colours::outline;
+    g.setColour (c);
+    g.strokePath (arc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.fillPath (head);
 }
 
 //==============================================================================
@@ -35,20 +65,51 @@ MainView::MainView (AbyssalProcessor& p)
       outMeter ([&p] { return p.getOutputPeak(); }),
       chain (p), pedals (p),
       preBoard (p, pedals, true), ampPage (p), cabPage (p), eqPage (p), postBoard (p, pedals, false),
-      browser (p), tone3000 (p)
+      browser (p), tone3000 (p), tuner (p)
 {
     setOpaque (true);
+    setWantsKeyboardFocus (true);
 
     pages = { &preBoard, &ampPage, &cabPage, &eqPage, &postBoard };
     for (auto* pg : pages)
         addChildComponent (pg);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &prevPreset, &presetDisplay, &nextPreset, &favourite, &savePreset,
+    for (auto* c : std::initializer_list<juce::Component*> { &undoButton, &redoButton, &snapA, &snapB, &tunerButton,
+                                                             &prevPreset, &presetDisplay, &nextPreset, &favourite, &savePreset,
                                                              &loadPreset, &inputSelect, &outputSelect, &inputKnob,
                                                              &outputKnob, &inMeter, &outMeter, &chain })
         addAndMakeVisible (c);
     addChildComponent (browser);
     addChildComponent (tone3000);
+    addChildComponent (tuner);
+    addChildComponent (saveDialog);
+
+    undoButton.onClick = [this] { proc.undo(); };
+    redoButton.onClick = [this] { proc.redo(); };
+
+    for (auto* b : { &snapA, &snapB })
+    {
+        const int slot = b == &snapA ? 0 : 1;
+        b->setClickingTogglesState (false);
+        b->setColour (juce::TextButton::buttonOnColourId, colours::accentAlt.withMultipliedBrightness (0.7f));
+        b->setTooltip (juce::String ("Compare: switch to sound ") + (slot == 0 ? "A" : "B") + "  (right-click to copy)");
+        b->onClick = [this, slot]
+        {
+            if (std::exchange (snapMenuShown, false)) return;
+            proc.selectSnapshot (slot);
+        };
+        b->addMouseListener (this, false);
+    }
+
+    tunerButton.setClickingTogglesState (false);
+    tunerButton.setColour (juce::TextButton::buttonOnColourId, colours::accent.withMultipliedBrightness (0.7f));
+    tunerButton.setTooltip ("Chromatic tuner (mutes the output while open)");
+    tunerButton.onClick = [this]
+    {
+        if (tuner.isVisible()) tuner.close();
+        else { browser.setVisible (false); tuner.open(); }
+    };
+    tuner.onVisibilityChange = [this] { tunerButton.setToggleState (tuner.isVisible(), juce::dontSendNotification); };
     proc.openTone3000 = [this] (int target)
     {
         browser.setVisible (false);
@@ -69,20 +130,8 @@ MainView::MainView (AbyssalProcessor& p)
         refreshPresetInfo();
     };
 
-    savePreset.onClick = [this]
-    {
-        auto dir = PresetManager::getUserPresetDirectory();
-        chooser = std::make_unique<juce::FileChooser> ("Save preset", dir.getChildFile (proc.getPresetName() + ".abyssal"), "*.abyssal");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this] (const juce::FileChooser& fc)
-        {
-            const auto f = fc.getResult();
-            if (f == juce::File()) return;
-            const auto err = proc.savePreset (f);
-            if (err.isNotEmpty())
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save preset", err);
-        });
-    };
+    savePreset.setTooltip ("Save the current sound as a user preset");
+    savePreset.onClick = [this] { openSaveDialog(); };
 
     loadPreset.onClick = [this]
     {
@@ -100,8 +149,12 @@ MainView::MainView (AbyssalProcessor& p)
 
     chain.onSelect = [this] (int i) { showPage (i); };
     proc.presetChanged.addChangeListener (this);
+    proc.snapshotChanged.addChangeListener (this);
+    proc.getUndoManager().addChangeListener (this);
 
     refreshPresetInfo();
+    refreshUndoButtons();
+    refreshSnapshotButtons();
     showPage (juce::jlimit (0, 4, proc.lastUiPage));
 }
 
@@ -109,6 +162,111 @@ MainView::~MainView()
 {
     proc.openTone3000 = nullptr;
     proc.presetChanged.removeChangeListener (this);
+    proc.snapshotChanged.removeChangeListener (this);
+    proc.getUndoManager().removeChangeListener (this);
+}
+
+void MainView::changeListenerCallback (juce::ChangeBroadcaster* source)
+{
+    if (source == &proc.getUndoManager()) refreshUndoButtons();
+    else if (source == &proc.snapshotChanged) refreshSnapshotButtons();
+    else refreshPresetInfo();
+}
+
+void MainView::refreshUndoButtons()
+{
+    auto& um = proc.getUndoManager();
+    undoButton.setEnabled (um.canUndo());
+    redoButton.setEnabled (um.canRedo());
+    undoButton.setTooltip (um.canUndo() ? "Undo " + um.getUndoDescription() + "  (Ctrl+Z)" : juce::String ("Nothing to undo"));
+    redoButton.setTooltip (um.canRedo() ? "Redo " + um.getRedoDescription() + "  (Ctrl+Y)" : juce::String ("Nothing to redo"));
+}
+
+void MainView::refreshSnapshotButtons()
+{
+    snapA.setToggleState (proc.getActiveSnapshot() == 0, juce::dontSendNotification);
+    snapB.setToggleState (proc.getActiveSnapshot() == 1, juce::dontSendNotification);
+}
+
+void MainView::showSnapshotMenu (int slot)
+{
+    const auto other = juce::String (proc.getActiveSnapshot() == 0 ? "B" : "A");
+    juce::PopupMenu m;
+    m.addSectionHeader ("A / B COMPARE");
+    m.addItem (1, "Copy this sound to " + other);
+    m.addItem (2, "Switch to " + juce::String (slot == 0 ? "A" : "B"), proc.getActiveSnapshot() != slot);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (slot == 0 ? &snapA : &snapB), [this, slot] (int r)
+    {
+        if (r == 1) proc.copyToOtherSnapshot();
+        if (r == 2) proc.selectSnapshot (slot);
+    });
+}
+
+void MainView::openSaveDialog()
+{
+    browser.setVisible (false);
+    tuner.setVisible (false);
+
+    // Start from the loaded preset's details. Factory presets keep their category.
+    const PresetDialog::Details initial { proc.getPresetName(), proc.getPresetCategory() == "Utility" ? juce::String (PresetManager::userCategory)
+                                                                                                      : proc.getPresetCategory(),
+                                          proc.getPresetNotes() };
+    saveDialog.show ("SAVE PRESET", "SAVE", initial, proc.presets.getSaveCategories(), [this] (const PresetDialog::Details& d)
+    {
+        const auto name = juce::File::createLegalFileName (d.name);
+        if (name.isEmpty())
+            return juce::String ("That name can't be used as a file name");
+        const auto file = PresetManager::getUserPresetDirectory().getChildFile (name + ".abyssal");
+        const bool overwritingOther = file.existsAsFile() && "user:" + file.getFullPathName() != proc.getPresetKey();
+
+        auto save = [this, file, d]
+        {
+            const auto err = proc.savePreset (file, d.category, d.notes);
+            if (err.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save preset", err);
+        };
+
+        if (! overwritingOther)
+        {
+            save();
+            return juce::String();
+        }
+
+        auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, "Save preset",
+                                                                     "A preset called \"" + name + "\" already exists. Replace it?",
+                                                                     "Replace", "Cancel", this);
+        juce::AlertWindow::showAsync (options, [this, save] (int result)
+        {
+            if (result == 1) { save(); saveDialog.dismiss(); }
+        });
+        return juce::String ("Waiting for confirmation...");
+    });
+}
+
+void MainView::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != &snapA && e.eventComponent != &snapB)
+        return;
+    snapMenuShown = e.mods.isPopupMenu();
+    if (snapMenuShown)
+        showSnapshotMenu (e.eventComponent == &snapA ? 0 : 1);
+}
+
+bool MainView::keyPressed (const juce::KeyPress& k)
+{
+    const auto mods = k.getModifiers();
+    if (mods.isCommandDown() && k.getKeyCode() == 'Z')
+    {
+        if (mods.isShiftDown()) proc.redo();
+        else                    proc.undo();
+        return true;
+    }
+    if (mods.isCommandDown() && k.getKeyCode() == 'Y')
+    {
+        proc.redo();
+        return true;
+    }
+    return false;
 }
 
 void MainView::showPage (int index)
@@ -184,7 +342,7 @@ void MainView::resized()
 {
     auto r = getLocalBounds();
     auto header = r.removeFromTop (headerHeight).reduced (20, 14);
-    header.removeFromLeft (230); // logo
+    header.removeFromLeft (200); // logo
 
     // right: routing + input / output
     auto io = header.removeFromRight (330);
@@ -200,25 +358,39 @@ void MainView::resized()
     inputSelect.setBounds (routing.removeFromTop (routing.getHeight() / 2).reduced (0, 2));
     outputSelect.setBounds (routing.reduced (0, 2));
 
-    // centre: preset bar
-    auto presets = header.withSizeKeepingCentre (std::min (header.getWidth(), 540), 36);
-    prevPreset.setBounds (presets.removeFromLeft (32));
-    presets.removeFromLeft (5);
-    loadPreset.setBounds (presets.removeFromRight (58));
-    presets.removeFromRight (5);
-    savePreset.setBounds (presets.removeFromRight (58));
-    presets.removeFromRight (5);
-    favourite.setBounds (presets.removeFromRight (36));
-    presets.removeFromRight (5);
-    nextPreset.setBounds (presets.removeFromRight (32));
-    presets.removeFromRight (5);
-    presetDisplay.setBounds (presets);
+    // centre: undo / redo, preset bar, A/B, tuner
+    auto bar = header.withSizeKeepingCentre (header.getWidth(), 36);
+    bar.removeFromRight (12);
+    undoButton.setBounds (bar.removeFromLeft (30));
+    bar.removeFromLeft (4);
+    redoButton.setBounds (bar.removeFromLeft (30));
+    bar.removeFromLeft (12);
+    tunerButton.setBounds (bar.removeFromRight (62));
+    bar.removeFromRight (8);
+    snapB.setBounds (bar.removeFromRight (30));
+    bar.removeFromRight (3);
+    snapA.setBounds (bar.removeFromRight (30));
+    bar.removeFromRight (12);
+
+    prevPreset.setBounds (bar.removeFromLeft (28));
+    bar.removeFromLeft (4);
+    loadPreset.setBounds (bar.removeFromRight (50));
+    bar.removeFromRight (4);
+    savePreset.setBounds (bar.removeFromRight (50));
+    bar.removeFromRight (4);
+    favourite.setBounds (bar.removeFromRight (34));
+    bar.removeFromRight (4);
+    nextPreset.setBounds (bar.removeFromRight (28));
+    bar.removeFromRight (4);
+    presetDisplay.setBounds (bar);
 
     chain.setBounds (r.removeFromTop (chainHeight));
     for (auto* pg : pages)
         pg->setBounds (r.reduced (8, 6));
     browser.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
     tone3000.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
+    tuner.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
+    saveDialog.setBounds (getLocalBounds());
 }
 
 //==============================================================================

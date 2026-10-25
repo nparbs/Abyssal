@@ -1,19 +1,26 @@
 #pragma once
 
 #include "Common.h"
+#include "PitchShifter.h"
 
 namespace abyssal
 {
 
 //============================================================================== Noise gate
-struct GateParams { bool on = true; float threshDb = -60, releaseMs = 80; };
+struct GateParams
+{
+    bool on = true;
+    float threshDb = -60, releaseMs = 80;
+    bool keyFromInput = false; // detect from the guitar input instead of the signal at the pedal
+};
 
 class NoiseGate
 {
 public:
     void prepare (double sampleRate, int maxBlock);
     void reset();
-    void process (float* data, int n, const GateParams& p);
+    /** `key` (optional) is the detector signal; null uses `data` itself. */
+    void process (float* data, int n, const GateParams& p, const float* key = nullptr);
     float getGainReductionDb() const noexcept { return gainReductionDb; }
 
 private:
@@ -24,20 +31,6 @@ private:
 };
 
 //============================================================================== Pitch shifting
-/** Classic two-tap delay-line pitch shifter with sin² crossfades. Low CPU, monophonic-friendly. */
-class PitchShifter
-{
-public:
-    void prepare (double sampleRate, double windowMs);
-    void reset();
-    void setRatio (float r) noexcept { ratio = r; }
-    float process (float x) noexcept;
-
-private:
-    FracDelay delay;
-    float window = 2048, phase = 0, ratio = 1;
-};
-
 struct OctaverParams { bool on = false; float dry = 1, down1 = 0.5f, down2 = 0; };
 
 class Octaver
@@ -60,6 +53,7 @@ public:
     void prepare (double sampleRate, int maxBlock);
     void reset();
     void process (float* data, int n, const DropTuneParams& p);
+    int getLatencySamples() const noexcept { return shifter.getLatencySamples(); }
 
 private:
     PitchShifter shifter;

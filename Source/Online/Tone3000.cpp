@@ -342,7 +342,7 @@ HttpResponse Client::authed (const juce::String& method, const juce::String& pat
 }
 
 //============================================================================== API calls
-void Client::listTones (List which, int page, std::function<void (Result<juce::Array<Tone>>)> done)
+void Client::listTones (List which, int page, std::function<void (Result<TonePage>)> done)
 {
     juce::String path;
     switch (which)
@@ -354,10 +354,10 @@ void Client::listTones (List which, int page, std::function<void (Result<juce::A
         case List::latest:     path = "/api/v1/tones/latest"; break;
     }
 
-    runAsync ([this, path, done]
+    runAsync ([this, path, page, done]
     {
         const auto res = authed ("GET", path);
-        Result<juce::Array<Tone>> r;
+        Result<TonePage> r;
         r.status = res.status;
         if (res.ok())
         {
@@ -365,10 +365,40 @@ void Client::listTones (List which, int page, std::function<void (Result<juce::A
             const auto body = res.json();
             const auto data = body.isArray() ? body : body.getProperty ("data", juce::var());
             if (auto* arr = data.getArray())
-                for (auto& t : *arr) r.value.add (Tone::fromVar (t));
+                for (auto& t : *arr) r.value.tones.add (Tone::fromVar (t));
+            r.value.page = body.isObject() ? (int) body.getProperty ("page", page) : page;
+            r.value.totalPages = body.isObject() ? std::max (1, (int) body.getProperty ("total_pages", 1)) : 1;
         }
         else r.error = errorMessage (res);
         juce::MessageManager::callAsync ([done, r] { done (r); });
+    });
+}
+
+void Client::setFavorite (int toneId, bool favorite, std::function<void (Result<bool>)> done)
+{
+    runAsync ([this, toneId, favorite, done]
+    {
+        // Both directions are idempotent: PUT answers 200 with the favorite, DELETE 204.
+        const auto res = authed (favorite ? "PUT" : "DELETE", "/api/v1/tones/" + juce::String (toneId) + "/favorite");
+        Result<bool> r;
+        r.status = res.status;
+        r.ok = res.ok();
+        r.value = favorite;
+        if (! r.ok) r.error = errorMessage (res);
+        juce::MessageManager::callAsync ([done, r] { done (r); });
+    });
+}
+
+void Client::fetchImage (const juce::String& url, std::function<void (juce::Image)> done)
+{
+    runAsync ([url, done]
+    {
+        HttpRequest req;
+        req.url = juce::URL (url);
+        req.timeoutMs = 15000;
+        const auto res = sendSync (req);
+        auto image = res.ok() ? juce::ImageFileFormat::loadFrom (res.body.getData(), res.body.getSize()) : juce::Image();
+        juce::MessageManager::callAsync ([done, image] { done (image); });
     });
 }
 

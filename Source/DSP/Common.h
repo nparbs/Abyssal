@@ -7,6 +7,14 @@
 namespace abyssal
 {
 
+/** Note values for tempo-synced effects (delay, tremolo). */
+struct DelayDivisions
+{
+    static constexpr int count = 8;
+    static constexpr float beats[count] = { 4.0f, 2.0f, 1.5f, 1.0f, 0.75f, 0.5f, 1.0f / 3.0f, 0.25f };
+    static juce::StringArray names() { return { "1/1", "1/2", "1/4.", "1/4", "1/8.", "1/8", "1/8T", "1/16" }; }
+};
+
 inline float dbToGain (float db) noexcept { return std::pow (10.0f, db * 0.05f); }
 inline float gainToDb (float g) noexcept  { return 20.0f * std::log10 (std::max (g, 1.0e-9f)); }
 

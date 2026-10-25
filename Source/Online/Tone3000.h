@@ -6,6 +6,7 @@
 #pragma once
 
 #include "T3KAuth.h"
+#include <juce_graphics/juce_graphics.h>
 
 namespace abyssal::t3k
 {
@@ -35,6 +36,13 @@ struct Model
 
     static Model fromVar (const juce::var&);
     juce::String extension() const;
+};
+
+/** One page of a tone list. */
+struct TonePage
+{
+    juce::Array<Tone> tones;
+    int page = 1, totalPages = 1;
 };
 
 template <typename T>
@@ -73,7 +81,12 @@ public:
 
     // ---- API
     enum class List { favorited, downloaded, created, trending, latest };
-    void listTones (List which, int page, std::function<void (Result<juce::Array<Tone>>)> done);
+    /** `page` is 1-based. Trending / latest have a single page. */
+    void listTones (List which, int page, std::function<void (Result<TonePage>)> done);
+    /** Adds or removes a tone from the user's TONE3000 favorites. */
+    void setFavorite (int toneId, bool favorite, std::function<void (Result<bool>)> done);
+    /** Downloads a public image (creator avatars). Calls back with an invalid image on failure. */
+    void fetchImage (const juce::String& url, std::function<void (juce::Image)> done);
     void getTone (int id, std::function<void (Result<Tone>)> done);
     /** All models of a tone: A1/custom and A2 NAM models, or the IRs. */
     void listModels (int toneId, std::function<void (Result<juce::Array<Model>>)> done);

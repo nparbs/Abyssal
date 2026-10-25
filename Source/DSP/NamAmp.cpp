@@ -31,13 +31,31 @@ struct LinearFifo
     }
 };
 
+void NamTone::process (float* data, int n, const NamToneParams& p) noexcept
+{
+    if (p.bass != cached.bass || p.mid != cached.mid || p.treble != cached.treble || p.presence != cached.presence)
+    {
+        cached = p;
+        using T = Biquad::Type;
+        bands[0].setup (T::LowShelf, sr, 110.0, 0.7, (p.bass - 5.0f) * 2.0f);
+        bands[1].setup (T::Peak, sr, 700.0, 0.8, (p.mid - 5.0f) * 2.0f);
+        bands[2].setup (T::HighShelf, sr, 2400.0, 0.7, (p.treble - 5.0f) * 2.0f);
+        bands[3].setup (T::Peak, sr, 4800.0, 0.9, (p.presence - 5.0f) * 2.0f);
+    }
+    for (int i = 0; i < n; ++i)
+        data[i] = bands[3].process (bands[2].process (bands[1].process (bands[0].process (data[i]))));
+}
+
+static constexpr int cushion = 32;
+
 struct NamAmp::Model
 {
     std::unique_ptr<nam::DSP> dsp;
     double hostRate = 48000.0;   // host settings this model was configured for
     int hostBlock = 512;
-    double rate = 48000.0;
+    double rate = 48000.0;      // the model's own rate
     bool resample = false;
+    int latency = 0;            // host samples added by the resampler
     float normGain = 1.0f;
     int maxModelBlock = 0;
 
@@ -54,11 +72,13 @@ void NamAmp::configure (Model& m, double sampleRate, int blockSize) const
 {
     m.hostRate = sampleRate;
     m.hostBlock = blockSize;
-    m.rate = m.dsp->GetExpectedSampleRate() > 0 ? m.dsp->GetExpectedSampleRate() : 48000.0;
+    if (m.dsp != nullptr)
+        m.rate = m.dsp->GetExpectedSampleRate() > 0 ? m.dsp->GetExpectedSampleRate() : 48000.0;
     m.resample = std::abs (m.rate - sampleRate) > 0.5;
     m.maxModelBlock = (int) std::ceil (blockSize * (m.resample ? m.rate / sampleRate : 1.0)) + 8;
 
-    m.dsp->Reset (m.resample ? m.rate : sampleRate, m.maxModelBlock);
+    if (m.dsp != nullptr)
+        m.dsp->Reset (m.resample ? m.rate : sampleRate, m.maxModelBlock);
 
     m.namIn.assign ((size_t) m.maxModelBlock, 0.0);
     m.namOut.assign ((size_t) m.maxModelBlock, 0.0);
@@ -68,12 +88,16 @@ void NamAmp::configure (Model& m, double sampleRate, int blockSize) const
 
     m.inFifo.allocate (blockSize * 2 + 64);
     m.midFifo.allocate (m.maxModelBlock * 3 + 128);
-    static const float silence[32] = {};
-    m.midFifo.push (silence, 32); // small cushion so the output side never underruns
+    static const float silence[cushion] = {};
+    m.midFifo.push (silence, cushion); // small cushion so the output side never underruns
     m.up.reset();
     m.down.reset();
 
-    m.normGain = m.dsp->HasLoudness() ? dbToGain ((float) (-18.0 - m.dsp->GetLoudness())) : 1.0f;
+    // The cushion plus what the down-sampler holds back (both at the model rate), and the sample the
+    // up-sampler holds back. Matches the measured delay in AbyssalRender --dsptest.
+    m.latency = m.resample ? (int) std::round ((cushion + 3) * sampleRate / m.rate + 1.0) : 0;
+
+    m.normGain = m.dsp != nullptr && m.dsp->HasLoudness() ? dbToGain ((float) (-18.0 - m.dsp->GetLoudness())) : 1.0f;
 }
 
 void NamAmp::prepare (double sampleRate, int maxBlock)
@@ -82,7 +106,10 @@ void NamAmp::prepare (double sampleRate, int maxBlock)
     hostBlock = maxBlock;
     const juce::SpinLock::ScopedLockType sl (lock);
     if (model)
+    {
         configure (*model, sampleRate, maxBlock);
+        latency = model->latency;
+    }
 }
 
 void NamAmp::reset()
@@ -117,12 +144,15 @@ void NamAmp::installModel (PreparedModel fresh, const juce::File& file)
 {
     jassert (fresh != nullptr);
     modelRate = fresh->rate;
+    modelHasInputLevel = fresh->dsp != nullptr && fresh->dsp->HasInputLevel();
+    modelInputLevel = modelHasInputLevel ? fresh->dsp->GetInputLevel() : 0.0;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
         // The host may have changed rate or block size while the model was being prepared.
         if (fresh->hostRate != hostRate || fresh->hostBlock != hostBlock)
             configure (*fresh, hostRate, hostBlock);
         std::swap (model, fresh);
+        latency = model->latency;
     }
     modelFile = file;
     modelLoaded = true;
@@ -148,6 +178,16 @@ void NamAmp::unloadModel()
     }
     modelFile = juce::File();
     modelLoaded = false;
+    modelHasInputLevel = false;
+    latency = 0;
+}
+
+void NamAmp::installIdentityModel (double modelSampleRate)
+{
+    auto m = std::make_shared<Model>();
+    m->rate = modelSampleRate;
+    configure (*m, hostRate, hostBlock);
+    installModel (std::move (m), juce::File());
 }
 
 bool NamAmp::process (float* data, int n, float inGainDb, float outGainDb)
@@ -171,6 +211,11 @@ void NamAmp::processModel (Model& m, float* data, int n, float inGain, float out
 
     auto runNam = [&] (const float* in, float* out, int count)
     {
+        if (m.dsp == nullptr) // identity test model
+        {
+            for (int i = 0; i < count; ++i) out[i] = in[i] * inGain;
+            return;
+        }
         for (int i = 0; i < count; ++i) m.namIn[(size_t) i] = (NAM_SAMPLE) (in[i] * inGain);
         m.dsp->process (inPtr, outPtr, count);
         for (int i = 0; i < count; ++i) out[i] = (float) m.namOut[(size_t) i];

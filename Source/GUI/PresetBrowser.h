@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Widgets.h"
+#include "PresetDialog.h"
 #include "../PresetManager.h"
 
 class AbyssalProcessor;
@@ -20,7 +21,8 @@ public:
 };
 
 /** Full-window preset browser: category list, search box, and a preset list with favourites.
-    Clicking or arrowing through the list loads presets immediately; double-click / Enter closes. */
+    Clicking or arrowing through the list loads presets immediately; double-click / Enter closes.
+    Right-click a user preset to rename it, change its category / notes, or delete it. */
 class PresetBrowser : public juce::Component,
                       private juce::ListBoxModel,
                       private juce::ChangeListener
@@ -53,6 +55,8 @@ private:
     void rebuildCategories();
     void applyFilter();
     void loadRow (int row);
+    void showRowMenu (int row);
+    void refreshAll();
     juce::Rectangle<int> panelBounds() const;
 
     AbyssalProcessor& proc;
@@ -64,6 +68,7 @@ private:
     juce::TextButton closeButton { "CLOSE" };
     juce::OwnedArray<juce::TextButton> categoryButtons;
     juce::ListBox list { "presets", this };
+    PresetDialog dialog;
 };
 
 } // namespace abyssal::ui

@@ -42,6 +42,7 @@ PedalSet::PedalSet (AbyssalProcessor& p) : proc (p)
     auto* gate = make (fxGate, new Pedal (st, "Noise Gate", ids::gateOn, juce::Colour (0xff2c3038), juce::Colour (0xff3ddc84)));
     gate->addKnob (ids::gateThresh, "Threshold");
     gate->addKnob (ids::gateRelease, "Release");
+    gate->addToggle (ids::gateKey, "INPUT KEY");
 
     auto* oct = make (fxOctaver, new Pedal (st, "Octaver", ids::octOn, juce::Colour (0xff4a2a78), juce::Colour (0xffc58cff)));
     oct->addKnob (ids::octDry, "Dry");
@@ -85,23 +86,71 @@ PedalSet::PedalSet (AbyssalProcessor& p) : proc (p)
     fl->addKnob (ids::flFeedback, "Feedback", true);
     fl->addKnob (ids::flMix, "Mix");
 
-    auto* dly = new DelayPedal (st, ids::dlyOn, ids::dlySync, juce::Colour (0xff353c45), colours::amber);
+    auto* dly = new DelayPedal (st, ids::dlyOn, ids::dlySync, ids::dlyTime, juce::Colour (0xff353c45), colours::amber);
     make (fxDelay, dly);
+    dly->setWidthUnits (2);
+    dly->setKnobsPerRow (4);
     dly->timeKnob = &dly->addKnob (ids::dlyTime, "Time");
     dly->addKnob (ids::dlyFeedback, "Feedback");
     dly->addKnob (ids::dlyTone, "Tone");
     dly->addKnob (ids::dlyMix, "Mix");
+    dly->addChoice (ids::dlyMode);
     dly->addToggle (ids::dlySync, "SYNC");
     dly->addChoice (ids::dlyDiv);
     dly->addToggle (ids::dlyPing, "PING");
+    {
+        auto* tapButton = new juce::TextButton ("TAP");
+        tapButton->setTooltip ("Tap the delay time (turns tempo sync off)");
+        tapButton->onClick = [dly, tapButton]
+        {
+            const float ms = dly->tap (juce::Time::getMillisecondCounterHiRes());
+            tapButton->setButtonText (ms > 0.0f ? juce::String (juce::roundToInt (ms)) : juce::String ("TAP"));
+        };
+        dly->addMini (tapButton);
+    }
 
     auto* rev = make (fxReverb, new Pedal (st, "Reverb", ids::revOn, juce::Colour (0xff0c4a43), juce::Colour (0xff5ef2d6)));
-    rev->setKnobsPerRow (3);
+    rev->setWidthUnits (2);
+    rev->setKnobsPerRow (6);
     rev->addKnob (ids::revSize, "Size");
     rev->addKnob (ids::revDamp, "Damping");
     rev->addKnob (ids::revPredelay, "Pre-Delay");
     rev->addKnob (ids::revWidth, "Width");
     rev->addKnob (ids::revMix, "Mix");
+    rev->addKnob (ids::revShimmer, "Shimmer");
+    rev->addChoice (ids::revMode);
+
+    auto* wah = make (fxWah, new Pedal (st, "Wah", ids::wahOn, juce::Colour (0xff1f1f22), juce::Colour (0xffff9f43)));
+    wah->setKnobsPerRow (3);
+    wah->addKnob (ids::wahPos, "Pedal").slider.setTooltip ("Pedal position, heel to toe (automate it, or switch to Auto)");
+    wah->addKnob (ids::wahSens, "Sens").slider.setTooltip ("Auto mode: how far your picking pushes the sweep");
+    wah->addKnob (ids::wahQ, "Peak");
+    wah->addChoice (ids::wahMode);
+
+    auto* wham = make (fxWhammy, new Pedal (st, "Whammy", ids::whamOn, juce::Colour (0xff8a1c1c), juce::Colour (0xffff6d5a)));
+    wham->addKnob (ids::whamPos, "Pedal").slider.setTooltip ("Treadle position: 0 = no shift, full = the whole interval");
+    wham->addKnob (ids::whamMix, "Mix");
+    wham->addChoice (ids::whamInterval);
+
+    auto* pha = make (fxPhaser, new Pedal (st, "Phaser", ids::phaOn, juce::Colour (0xff9a4a12), juce::Colour (0xffffa94d)));
+    pha->addKnob (ids::phaRate, "Rate");
+    pha->addKnob (ids::phaDepth, "Depth");
+    pha->addKnob (ids::phaFeedback, "Fdbk");
+    pha->addKnob (ids::phaMix, "Mix");
+    pha->addChoice (ids::phaStages);
+
+    auto* trem = make (fxTremolo, new Pedal (st, "Tremolo", ids::tremOn, juce::Colour (0xff5b4a1d), juce::Colour (0xffffd166)));
+    trem->addKnob (ids::tremRate, "Rate");
+    trem->addKnob (ids::tremDepth, "Depth");
+    trem->addKnob (ids::tremShape, "Shape");
+    trem->addToggle (ids::tremSync, "SYNC");
+    trem->addChoice (ids::tremDiv);
+    trem->addToggle (ids::tremPan, "PAN");
+
+    auto* dbl = make (fxDoubler, new Pedal (st, "Doubler", ids::dblOn, juce::Colour (0xff3a2f5c), juce::Colour (0xffb9a4ff)));
+    dbl->addKnob (ids::dblWidth, "Width");
+    dbl->addKnob (ids::dblTime, "Time");
+    dbl->addKnob (ids::dblDetune, "Detune");
 }
 
 void PedalSet::showContextMenu (Pedal& pedal)
@@ -131,7 +180,7 @@ void PedalSet::showContextMenu (Pedal& pedal)
             case 4: o = ChainOrder::defaultOrder(); break;
             default: return;
         }
-        proc.setChainOrder (o);
+        proc.changeChainOrder (o);
     });
 }
 
@@ -176,7 +225,7 @@ void BoardPage::resized()
     for (int id : items) totalUnits += unitsOf (id);
 
     const int gap = 14;
-    const int rows = totalUnits <= 6 ? 1 : 2;
+    const int rows = totalUnits <= 6 ? 1 : totalUnits <= 12 ? 2 : 3;
 
     // Split the pedals over the rows as evenly as possible by width.
     juce::Array<juce::Array<int>> rowItems;
@@ -184,7 +233,7 @@ void BoardPage::resized()
     int acc = 0;
     for (int id : items)
     {
-        const int row = (rows == 2 && acc >= (totalUnits + 1) / 2) ? 1 : 0;
+        const int row = std::min (rows - 1, acc * rows / totalUnits);
         rowItems.getReference (row).add (id);
         acc += unitsOf (id);
     }
@@ -198,7 +247,7 @@ void BoardPage::resized()
     }
 
     const int unitW = std::min (rows == 1 ? 260 : 230, (boardArea.getWidth() - gap * (maxUnits - 1)) / maxUnits);
-    const int rowH = rows == 1 ? std::min (boardArea.getHeight(), 470) : (boardArea.getHeight() - gap) / 2;
+    const int rowH = rows == 1 ? std::min (boardArea.getHeight(), 470) : (boardArea.getHeight() - gap * (rows - 1)) / rows;
     int y = rows == 1 ? boardArea.getCentreY() - rowH / 2 : boardArea.getY();
     auto widthOf = [&] (int id) { return unitsOf (id) * unitW + (unitsOf (id) - 1) * gap; };
 
@@ -290,7 +339,7 @@ void BoardPage::itemDropped (const SourceDetails& d)
 
     auto order = proc.getChainOrder();
     order.moveTo (id, preAmp, idx);
-    proc.setChainOrder (order);
+    proc.changeChainOrder (order);
     rebuild();
 }
 
@@ -366,8 +415,9 @@ namespace
 //==============================================================================
 AmpPage::AmpPage (AbyssalProcessor& p)
     : proc (p),
-      channel (p.apvts, ids::ampChannel, { colours::accentAlt, colours::amber, colours::accent }),
+      channel (p.apvts, ids::ampChannel, { colours::accentAlt, colours::amber, colours::accent, colours::abyss }),
       mode (p.apvts, ids::ampMode, { colours::accent, colours::amber }),
+      power (p.apvts, ids::ampPower, { colours::textDim, colours::textDim }),
       gain (p.apvts, ids::ampGain, "Gain"),
       bass (p.apvts, ids::ampBass, "Bass"),
       mid (p.apvts, ids::ampMid, "Middle"),
@@ -377,15 +427,22 @@ AmpPage::AmpPage (AbyssalProcessor& p)
       master (p.apvts, ids::ampMaster, "Master"),
       namIn (p.apvts, ids::namIn, "Input", colours::amber, true),
       namOut (p.apvts, ids::namOut, "Output", colours::amber, true),
+      calLevel (p.apvts, ids::namCalLevel, "Interface", colours::amber),
       bright (p.apvts, ids::ampBright, "BRIGHT"),
       tight (p.apvts, ids::ampTight, "TIGHT"),
+      calibrate (p.apvts, ids::namCalibrate, "CALIBRATE", colours::amber),
       capture (namConfig (p))
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &channel, &mode, &gain, &bass, &mid, &treble, &presence, &depth,
-                                                             &master, &namIn, &namOut, &bright, &tight, &capture,
-                                                             &loadCapture, &loadCaptureFolder, &unloadCapture, &namInfo,
-                                                             &tone3000 })
+    for (auto* c : std::initializer_list<juce::Component*> { &channel, &mode, &power, &gain, &bass, &mid, &treble, &presence, &depth,
+                                                             &master, &namIn, &namOut, &calLevel, &bright, &tight, &calibrate,
+                                                             &capture, &loadCapture, &loadCaptureFolder, &unloadCapture,
+                                                             &namInfo, &tone3000 })
         addAndMakeVisible (c);
+
+    power.setTooltip ("Power tubes: EL34 (upper-mid bite, earlier break-up) or 6L6 (rounder mids, firmer lows, more headroom)");
+    calibrate.setTooltip ("Match the capture's recorded input level to your interface, so captures react to your "
+                          "playing like the real amp did. Needs a capture that records its input level.");
+    calLevel.slider.setTooltip ("Your interface's input level, in dBu, for a 0 dBFS signal (see its specs, often 'max input level')");
 
     namInfo.setFont (font (13.0f));
     namInfo.setColour (juce::Label::textColourId, colours::textDim);
@@ -406,7 +463,13 @@ AmpPage::AmpPage (AbyssalProcessor& p)
     startTimerHz (4);
 }
 
-void AmpPage::timerCallback() { refreshNamLabel(); }
+void AmpPage::timerCallback()
+{
+    refreshNamLabel();
+    if (currentMode == 1) // follow the TONE switch (also when automated)
+        for (auto* k : { &bass, &mid, &treble, &presence })
+            k->setEnabled (bright.getToggleState());
+}
 
 void AmpPage::refreshNamLabel()
 {
@@ -419,34 +482,82 @@ void AmpPage::refreshNamLabel()
         info = "Trained at " + juce::String (mr / 1000.0, 1) + " kHz";
         if (std::abs (mr - hr) > 0.5)
             info << "  -  resampled from the host's " << juce::String (hr / 1000.0, 1) << " kHz";
+        if (proc.namHasInputLevel())
+        {
+            info << "  -  captured at " << juce::String (proc.getNamInputLevelDbu(), 1) << " dBu";
+            const float cal = proc.getNamCalibrationDb();
+            if (calibrate.getToggleState())
+                info << " (input " << (cal >= 0 ? "+" : "") << juce::String (cal, 1) << " dB)";
+        }
+        else if (calibrate.getToggleState())
+            info << "  -  no input level recorded, calibration off";
     }
     if (namInfo.getText() != info) namInfo.setText (info, juce::dontSendNotification);
     unloadCapture.setEnabled (proc.hasNamModel());
+    calLevel.setEnabled (currentMode == 1 && calibrate.getToggleState());
 }
 
 void AmpPage::channelChanged (int ch)
 {
-    static const juce::Colour cols[] = { colours::accentAlt, colours::amber, colours::accent };
-    static const char* names[] = { "CLEAN", "CRUNCH", "LEAD" };
-    accent = cols[juce::jlimit (0, 2, ch)];
-    channelName = names[juce::jlimit (0, 2, ch)];
-    for (auto* k : { &gain, &bass, &mid, &treble, &presence, &depth, &master })
-        k->slider.setColour (juce::Slider::rotarySliderFillColourId, accent);
-    bright.setColour (juce::TextButton::buttonOnColourId, accent);
-    tight.setColour (juce::TextButton::buttonOnColourId, accent);
+    static const juce::Colour cols[] = { colours::accentAlt, colours::amber, colours::accent, colours::abyss };
+    static const char* names[] = { "CLEAN", "CRUNCH", "LEAD", "ABYSS" };
+    currentChannel = juce::jlimit (0, ids::numAmpChannels - 1, ch);
+    accent = cols[currentChannel];
+    channelName = names[currentChannel];
+    bindFaceplate();
     repaint();
+}
+
+void AmpPage::bindFaceplate()
+{
+    Knob* faceplate[] = { &gain, &bass, &mid, &treble, &presence, &depth, &master };
+    const bool capture = currentMode == 1;
+
+    if (capture)
+    {
+        // A capture has no tone stack: Bass / Middle / Treble / Presence become an optional EQ after it.
+        bass.bind (ids::namBass);
+        mid.bind (ids::namMid);
+        treble.bind (ids::namTreble);
+        presence.bind (ids::namPresence);
+        bright.bind (ids::namTone);
+        bright.setButtonText ("TONE");
+        bright.setTooltip ("Bass / Middle / Treble / Presence after the capture");
+        const bool toneOn = bright.getToggleState();
+        for (auto* k : faceplate)
+            k->setEnabled (toneOn && (k == &bass || k == &mid || k == &treble || k == &presence));
+    }
+    else
+    {
+        // Every channel has its own faceplate: point the controls at this channel's parameters.
+        for (int k = 0; k < 7; ++k)
+            faceplate[k]->bind (ids::ampKnob (currentChannel, ids::ampKnobKeys[k]));
+        bright.bind (ids::ampKnob (currentChannel, "bright"));
+        tight.bind (ids::ampKnob (currentChannel, "tight"));
+        bright.setButtonText ("BRIGHT");
+        bright.setTooltip ({});
+        for (auto* k : faceplate)
+            k->setEnabled (true);
+    }
+
+    const auto col = capture ? colours::amber : accent;
+    for (auto* k : faceplate)
+        k->slider.setColour (juce::Slider::rotarySliderFillColourId, col);
+    bright.setColour (juce::TextButton::buttonOnColourId, col);
+    tight.setColour (juce::TextButton::buttonOnColourId, col);
+    tight.setVisible (! capture);
 }
 
 void AmpPage::modeChanged (int m)
 {
     currentMode = m;
-    for (auto* k : { &gain, &bass, &mid, &treble, &presence, &depth, &master })
-        k->setEnabled (m == 0);
-    bright.setEnabled (m == 0);
-    tight.setEnabled (m == 0);
+    bindFaceplate();
     channel.setEnabled (m == 0);
+    power.setEnabled (m == 0);
     namIn.setEnabled (m == 1);
     namOut.setEnabled (m == 1);
+    calibrate.setEnabled (m == 1);
+    calLevel.setEnabled (m == 1 && calibrate.getToggleState());
     repaint();
 }
 
@@ -464,7 +575,9 @@ void AmpPage::resized()
     auto f = face.reduced (18, 14);
     f.removeFromLeft (210); // logo
     auto top = f.removeFromTop (34);
-    channel.setBounds (top.removeFromRight (390));
+    channel.setBounds (top.removeFromRight (480));
+    top.removeFromRight (18);
+    power.setBounds (top.removeFromRight (150));
     f.removeFromTop (8);
 
     auto toggles = f.removeFromRight (104);
@@ -476,9 +589,12 @@ void AmpPage::resized()
         k->setBounds (f.removeFromLeft (w).reduced (6, 0));
 
     auto mp = modelPanel.reduced (22, 16);
-    auto knobsArea = mp.removeFromRight (220);
-    namIn.setBounds (knobsArea.removeFromLeft (110).reduced (8, 0));
-    namOut.setBounds (knobsArea.reduced (8, 0));
+    auto knobsArea = mp.removeFromRight (300);
+    namIn.setBounds (knobsArea.removeFromLeft (100).reduced (8, 0));
+    namOut.setBounds (knobsArea.removeFromLeft (100).reduced (8, 0));
+    calibrate.setBounds (knobsArea.removeFromTop (26).reduced (4, 0));
+    knobsArea.removeFromTop (4);
+    calLevel.setBounds (knobsArea.reduced (8, 0));
 
     mp.removeFromTop (24); // title
     auto row = mp.removeFromTop (34);
@@ -488,13 +604,13 @@ void AmpPage::resized()
     mp.removeFromTop (8);
     row = mp.removeFromTop (30);
     row.removeFromLeft (316);
-    loadCapture.setBounds (row.removeFromLeft (130));
+    loadCapture.setBounds (row.removeFromLeft (120));
     row.removeFromLeft (6);
-    loadCaptureFolder.setBounds (row.removeFromLeft (140));
+    loadCaptureFolder.setBounds (row.removeFromLeft (130));
     row.removeFromLeft (6);
-    unloadCapture.setBounds (row.removeFromLeft (90));
+    unloadCapture.setBounds (row.removeFromLeft (84));
     row.removeFromLeft (6);
-    tone3000.setBounds (row.removeFromLeft (110));
+    tone3000.setBounds (row.removeFromLeft (104));
     mp.removeFromTop (6);
     namInfo.setBounds (mp.removeFromTop (22).withTrimmedLeft (316));
 }
@@ -551,7 +667,7 @@ void AmpPage::paint (juce::Graphics& g)
     g.setColour (colours::textDim);
     g.setFont (font (11.0f, true));
     g.drawText ("HIGH GAIN AMPLIFIER", logo.removeFromTop (18), juce::Justification::centredLeft);
-    g.drawText (currentMode == 1 ? "NEURAL CAPTURE MODE" : "3-CHANNEL  /  120W", logo.removeFromTop (16), juce::Justification::centredLeft);
+    g.drawText (currentMode == 1 ? "NEURAL CAPTURE MODE" : "4-CHANNEL  /  120W", logo.removeFromTop (16), juce::Justification::centredLeft);
 
     // power + standby jewel light
     const juce::Point<float> jewel (logo.getX() + 14, logo.getBottom() - 22);
@@ -597,7 +713,7 @@ void AmpPage::paint (juce::Graphics& g)
     if (currentMode == 1)
     {
         g.setFont (font (12.0f));
-        g.drawText ("Capture mode bypasses the amp's tone controls - shape the tone on the EQ page.",
+        g.drawText ("Capture mode: the amp's tone stack is bypassed - switch on TONE for an EQ after the capture.",
                     modelPanel.reduced (22, 10).removeFromBottom (18), juce::Justification::centredLeft);
     }
 }
@@ -732,13 +848,20 @@ CabSlotPanel::CabSlotPanel (AbyssalProcessor& p, int s)
     : proc (p), slot (s),
       accent (s == 0 ? colours::accent : colours::accentAlt),
       onToggle (p.apvts, ids::cab (s, "on"), s == 0 ? "MIC A" : "MIC B", s == 0 ? colours::accent : colours::accentAlt),
+      invert (p.apvts, ids::cab (s, "inv"), "POLARITY", s == 0 ? colours::accent : colours::accentAlt),
       source (irConfig (p, s)),
+      micType (p.apvts, ids::cab (s, "mtype")),
       level (p.apvts, ids::cab (s, "level"), "Level", s == 0 ? colours::accent : colours::accentAlt),
       pan (p.apvts, ids::cab (s, "pan"), "Pan", s == 0 ? colours::accent : colours::accentAlt, true),
-      mic (p.apvts, ids::cab (s, "mic"), "Mic Pos", s == 0 ? colours::accent : colours::accentAlt)
+      mic (p.apvts, ids::cab (s, "mic"), "Mic Pos", s == 0 ? colours::accent : colours::accentAlt),
+      distance (p.apvts, ids::cab (s, "dist"), "Distance", s == 0 ? colours::accent : colours::accentAlt)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &source, &loadIR, &loadFolder, &tone3000, &fileLabel, &level, &pan, &mic })
+    for (auto* c : std::initializer_list<juce::Component*> { &onToggle, &invert, &source, &loadIR, &loadFolder, &tone3000, &fileLabel,
+                                                             &micType, &level, &pan, &mic, &distance })
         addAndMakeVisible (c);
+    micType.setTooltip ("Mic type: dynamic (the classic close mic), ribbon (dark, smooth, big lows) or condenser (open, airy top)");
+    invert.setTooltip ("Flip this mic's polarity (try it when blending two mics sounds thin)");
+    distance.slider.setTooltip ("Mic distance from the grille, up to about 50 cm: less proximity bass, less air, more floor reflection");
 
     fileLabel.setFont (font (13.0f));
     fileLabel.setColour (juce::Label::textColourId, colours::textDim);
@@ -785,9 +908,14 @@ void CabSlotPanel::resized()
     row.removeFromLeft (10);
     fileLabel.setBounds (row);
     r.removeFromTop (8);
-    const int w = r.getWidth() / 3;
-    for (auto* k : { &level, &pan, &mic })
-        k->setBounds (r.removeFromLeft (w).reduced (8, 0));
+    row = r.removeFromTop (28);
+    micType.setBounds (row.removeFromLeft (150));
+    row.removeFromLeft (8);
+    invert.setBounds (row.removeFromLeft (100));
+    r.removeFromTop (6);
+    const int w = r.getWidth() / 4;
+    for (auto* k : { &level, &pan, &mic, &distance })
+        k->setBounds (r.removeFromLeft (w).reduced (6, 0));
 }
 
 void CabSlotPanel::paint (juce::Graphics& g)
@@ -802,10 +930,12 @@ void CabSlotPanel::paint (juce::Graphics& g)
 }
 
 CabPage::CabPage (AbyssalProcessor& p)
-    : view (p), slotA (p, 0), slotB (p, 1), cabOn (p.apvts, ids::cabOn, "CABINET ON")
+    : view (p), slotA (p, 0), slotB (p, 1), cabOn (p.apvts, ids::cabOn, "CABINET ON"),
+      align (p.apvts, ids::cabAlign, "ALIGN MICS", colours::accentAlt)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &view, &slotA, &slotB, &cabOn })
+    for (auto* c : std::initializer_list<juce::Component*> { &view, &slotA, &slotB, &cabOn, &align })
         addAndMakeVisible (c);
+    align.setTooltip ("Line the two mics up in time: IR start offsets and mic distances no longer cause phase cancellation");
     startTimerHz (4);
 }
 
@@ -814,7 +944,10 @@ void CabPage::resized()
     auto r = getLocalBounds().reduced (28, 16);
     view.setBounds (r.removeFromLeft (560));
     r.removeFromLeft (24);
-    cabOn.setBounds (r.removeFromTop (34).removeFromRight (150));
+    auto header = r.removeFromTop (34);
+    cabOn.setBounds (header.removeFromRight (150));
+    header.removeFromRight (8);
+    align.setBounds (header.removeFromRight (130));
     r.removeFromTop (12);
     const int h = (r.getHeight() - 16) / 2;
     slotA.setBounds (r.removeFromTop (h));
@@ -1115,7 +1248,7 @@ void ChainBar::itemDropped (const SourceDetails& d)
     const int id = d.description.toString().fromFirstOccurrenceOf ("fx:", false, false).getIntValue();
     auto order = proc.getChainOrder();
     order.moveTo (id, b == 0, -1);
-    proc.setChainOrder (order);
+    proc.changeChainOrder (order);
 }
 
 
@@ -1132,12 +1265,10 @@ juce::String ChainBar::statusFor (int i, bool& lit) const
     auto on = [this] (const juce::String& id) { return proc.apvts.getRawParameterValue (id)->load() > 0.5f; };
     juce::StringArray active;
 
-    static const juce::String onIds[] = { ids::gateOn, ids::octOn, ids::dropOn, ids::compOn, ids::odOn, ids::geqOn,
-                                          ids::choOn, ids::flOn, ids::dlyOn, ids::revOn };
     auto sectionStatus = [&] (bool pre)
     {
         for (int id : proc.getChainOrder().section (pre))
-            if (on (onIds[id])) active.add (fxShortName (id));
+            if (on (ids::fxOnParam (id))) active.add (fxShortName (id));
         lit = ! active.isEmpty();
         return lit ? active.joinIntoString (" > ") : juce::String ("ALL BYPASSED");
     };
@@ -1151,8 +1282,9 @@ juce::String ChainBar::statusFor (int i, bool& lit) const
             lit = true;
             if (on (ids::ampMode))
                 return proc.hasNamModel() ? "NAM: " + proc.getNamFile().getFileNameWithoutExtension() : "NAM: NO CAPTURE";
-            static const char* names[] = { "CLEAN CHANNEL", "CRUNCH CHANNEL", "LEAD CHANNEL" };
-            return names[juce::jlimit (0, 2, (int) proc.apvts.getRawParameterValue (ids::ampChannel)->load())];
+            static const char* names[] = { "CLEAN", "CRUNCH", "LEAD", "ABYSS" };
+            return juce::String (names[juce::jlimit (0, ids::numAmpChannels - 1, (int) proc.apvts.getRawParameterValue (ids::ampChannel)->load())])
+                   + (on (ids::ampPower) ? "  /  6L6" : "  /  EL34");
         }
         case 2:
         {

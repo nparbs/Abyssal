@@ -62,6 +62,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     b.toggle (ids::gateOn, "Gate On", true);
     b.flt (ids::gateThresh,  "Gate Threshold", -96.0f, -10.0f, -62.0f, "dB", 0.0f, 0.1f);
     b.flt (ids::gateRelease, "Gate Release", 5.0f, 500.0f, 60.0f, "ms", 80.0f);
+    b.toggle (ids::gateKey, "Gate Key From Input", false);
 
     b.toggle (ids::octOn, "Octaver On", false);
     b.flt (ids::octDry,   "Octaver Dry", 0.0f, 1.0f, 1.0f);
@@ -94,20 +95,35 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     b.flt (ids::geqLevel, "Graphic EQ Level", -12.0f, 12.0f, 0.0f, "dB", 0.0f, 0.1f);
 
     b.choice (ids::ampMode, "Amp Model", { "Abyssal DSP", "NAM Capture" }, 0);
-    b.choice (ids::ampChannel, "Amp Channel", { "Clean", "Crunch", "Lead" }, 2);
-    b.knob (ids::ampGain, "Amp Gain", 6.5f);
-    b.knob (ids::ampBass, "Amp Bass", 5.5f);
-    b.knob (ids::ampMid, "Amp Mid", 5.0f);
-    b.knob (ids::ampTreble, "Amp Treble", 6.0f);
-    b.knob (ids::ampPresence, "Amp Presence", 5.5f);
-    b.knob (ids::ampDepth, "Amp Depth", 4.0f);
-    b.knob (ids::ampMaster, "Amp Master", 5.0f);
-    b.toggle (ids::ampBright, "Amp Bright", false);
-    b.toggle (ids::ampTight, "Amp Tight", true);
+    b.choice (ids::ampChannel, "Amp Channel", { "Clean", "Crunch", "Lead", "Abyss" }, 2);
+    b.choice (ids::ampPower, "Amp Power Tubes", { "EL34", "6L6" }, 0);
+    {
+        // Same defaults on every channel (the v0.2 shared faceplate), so factory presets that only
+        // list some knobs sound exactly as they did: gain, bass, mid, treble, presence, depth, master, bright, tight
+        const float defaults[ids::numAmpKnobs] = { 6.5f, 5.5f, 5.0f, 6.0f, 5.5f, 4.0f, 5.0f, 0.0f, 1.0f };
+        const char* knobNames[] = { "Gain", "Bass", "Mid", "Treble", "Presence", "Depth", "Master", "Bright", "Tight" };
+        const char* channelNames[] = { "Clean", "Crunch", "Lead", "Abyss" };
+        for (int c = 0; c < ids::numAmpChannels; ++c)
+            for (int k = 0; k < ids::numAmpKnobs; ++k)
+            {
+                const auto id = ids::ampKnob (c, ids::ampKnobKeys[k]);
+                const auto name = juce::String ("Amp ") + channelNames[c] + " " + knobNames[k];
+                if (k < 7) b.knob (id, name, defaults[k]);
+                else       b.toggle (id, name, defaults[k] > 0.5f);
+            }
+    }
     b.flt (ids::namIn,  "NAM Input",  -24.0f, 24.0f, 0.0f, "dB", 0.0f, 0.1f);
     b.flt (ids::namOut, "NAM Output", -24.0f, 24.0f, 0.0f, "dB", 0.0f, 0.1f);
+    b.toggle (ids::namCalibrate, "NAM Calibrate Input", false);
+    b.flt (ids::namCalLevel, "NAM Interface Level", -10.0f, 30.0f, 12.0f, "dBu", 0.0f, 0.1f);
+    b.toggle (ids::namTone, "NAM Tone Controls", false);
+    b.knob (ids::namBass, "NAM Bass", 5.0f);
+    b.knob (ids::namMid, "NAM Mid", 5.0f);
+    b.knob (ids::namTreble, "NAM Treble", 5.0f);
+    b.knob (ids::namPresence, "NAM Presence", 5.0f);
 
     b.toggle (ids::cabOn, "Cab On", true);
+    b.toggle (ids::cabAlign, "Cab Align Slots", true);
     for (int s = 0; s < 2; ++s)
     {
         const juce::String n = s == 0 ? "Cab A " : "Cab B ";
@@ -116,6 +132,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         b.flt (ids::cab (s, "level"), n + "Level", -24.0f, 12.0f, 0.0f, "dB", 0.0f, 0.1f);
         b.flt (ids::cab (s, "pan"), n + "Pan", -1.0f, 1.0f, 0.0f);
         b.flt (ids::cab (s, "mic"), n + "Mic Position", 0.0f, 1.0f, 0.3f);
+        b.choice (ids::cab (s, "mtype"), n + "Mic Type", Cabinet::getMicNames(), 0);
+        b.flt (ids::cab (s, "dist"), n + "Mic Distance", 0.0f, 1.0f, 0.0f);
+        b.toggle (ids::cab (s, "inv"), n + "Polarity Invert", false);
     }
 
     b.toggle (ids::peqOn, "Post EQ On", true);
@@ -149,6 +168,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     b.flt (ids::dlyTone, "Delay Tone", 800.0f, 14000.0f, 4500.0f, "Hz", 3500.0f);
     b.flt (ids::dlyMix, "Delay Mix", 0.0f, 1.0f, 0.25f);
     b.toggle (ids::dlyPing, "Delay Ping-Pong", true);
+    b.choice (ids::dlyMode, "Delay Mode", DelayParams::modeNames(), 0);
 
     b.toggle (ids::revOn, "Reverb On", false);
     b.flt (ids::revSize, "Reverb Size", 0.0f, 1.0f, 0.55f);
@@ -156,13 +176,88 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     b.flt (ids::revPredelay, "Reverb Pre-Delay", 0.0f, 200.0f, 20.0f, "ms", 40.0f);
     b.flt (ids::revWidth, "Reverb Width", 0.0f, 1.0f, 1.0f);
     b.flt (ids::revMix, "Reverb Mix", 0.0f, 1.0f, 0.2f);
+    b.choice (ids::revMode, "Reverb Mode", ReverbParams::modeNames(), 0);
+    b.flt (ids::revShimmer, "Reverb Shimmer", 0.0f, 1.0f, 0.5f);
+
+    b.toggle (ids::wahOn, "Wah On", false);
+    b.choice (ids::wahMode, "Wah Mode", { "Pedal", "Auto" }, 0);
+    b.flt (ids::wahPos, "Wah Position", 0.0f, 1.0f, 0.5f);
+    b.flt (ids::wahSens, "Wah Sensitivity", 0.0f, 1.0f, 0.5f);
+    b.flt (ids::wahQ, "Wah Resonance", 0.0f, 1.0f, 0.5f);
+
+    b.toggle (ids::whamOn, "Whammy On", false);
+    b.choice (ids::whamInterval, "Whammy Interval", WhammyParams::intervalNames(), 1);
+    b.flt (ids::whamPos, "Whammy Position", 0.0f, 1.0f, 1.0f);
+    b.flt (ids::whamMix, "Whammy Mix", 0.0f, 1.0f, 1.0f);
+
+    b.toggle (ids::phaOn, "Phaser On", false);
+    b.flt (ids::phaRate, "Phaser Rate", 0.05f, 8.0f, 0.5f, "Hz", 0.8f);
+    b.flt (ids::phaDepth, "Phaser Depth", 0.0f, 1.0f, 0.7f);
+    b.flt (ids::phaFeedback, "Phaser Feedback", 0.0f, 0.9f, 0.4f);
+    b.flt (ids::phaMix, "Phaser Mix", 0.0f, 1.0f, 0.6f);
+    b.choice (ids::phaStages, "Phaser Stages", { "4 Stage", "8 Stage" }, 0);
+
+    b.toggle (ids::tremOn, "Tremolo On", false);
+    b.flt (ids::tremRate, "Tremolo Rate", 0.5f, 15.0f, 5.0f, "Hz", 4.0f);
+    b.flt (ids::tremDepth, "Tremolo Depth", 0.0f, 1.0f, 0.6f);
+    b.flt (ids::tremShape, "Tremolo Shape", 0.0f, 1.0f, 0.3f);
+    b.toggle (ids::tremSync, "Tremolo Sync", false);
+    b.choice (ids::tremDiv, "Tremolo Division", DelayDivisions::names(), 5);
+    b.toggle (ids::tremPan, "Tremolo Auto-Pan", false);
+
+    b.toggle (ids::dblOn, "Doubler On", false);
+    b.flt (ids::dblWidth, "Doubler Width", 0.0f, 1.0f, 0.8f);
+    b.flt (ids::dblTime, "Doubler Time", 5.0f, 40.0f, 14.0f, "ms");
+    b.flt (ids::dblDetune, "Doubler Detune", 0.0f, 1.0f, 0.4f);
 
     return layout;
 }
 
 bool isGlobalParameter (const juce::String& paramId)
 {
-    return paramId == ids::inGain || paramId == ids::inputMode || paramId == ids::outputMode || paramId == ids::bypass;
+    return paramId == ids::inGain || paramId == ids::inputMode || paramId == ids::outputMode || paramId == ids::bypass
+        || paramId == ids::namCalibrate || paramId == ids::namCalLevel;
+}
+
+void migrateState (juce::ValueTree& state)
+{
+    const int version = (int) state.getProperty ("version", 1);
+    if (version < 3)
+    {
+        auto findParam = [&state] (const juce::String& id)
+        {
+            for (auto child : state)
+                if (child.hasType ("PARAM") && child.getProperty ("id").toString() == id)
+                    return child;
+            return juce::ValueTree();
+        };
+
+        const auto channelParam = findParam (ids::ampChannel);
+        const int channel = channelParam.isValid() ? (int) channelParam.getProperty ("value") : 2;
+        if (channel != 2)
+            for (auto* key : ids::ampKnobKeys)
+                if (auto legacy = findParam (ids::ampKnob (2, key)); legacy.isValid())
+                {
+                    auto target = findParam (ids::ampKnob (channel, key));
+                    if (! target.isValid())
+                    {
+                        target = juce::ValueTree ("PARAM");
+                        target.setProperty ("id", ids::ampKnob (channel, key), nullptr);
+                        state.appendChild (target, nullptr);
+                    }
+                    target.setProperty ("value", legacy.getProperty ("value"), nullptr);
+                }
+    }
+    if (version < 4)
+    {
+        // Built-in cabs 3..5 were added in front of "User IR".
+        for (auto child : state)
+            if (child.hasType ("PARAM"))
+                for (int slot = 0; slot < 2; ++slot)
+                    if (child.getProperty ("id").toString() == ids::cab (slot, "src") && (int) child.getProperty ("value") == 3)
+                        child.setProperty ("value", Cabinet::userSource, nullptr);
+    }
+    state.setProperty ("version", 4, nullptr);
 }
 
 //==============================================================================
@@ -175,15 +270,19 @@ ParamCache::ParamCache (juce::AudioProcessorValueTreeState& apvts)
     for (int i = 0; i < GraphicEQParams::numBands; ++i)
         geq[i] = map.at (ids::geqBand (i));
 
-    const char* cabFields[] = { "on", "src", "level", "pan", "mic" };
+    const char* cabFields[] = { "on", "src", "level", "pan", "mic", "mtype", "dist", "inv" };
     for (int s = 0; s < 2; ++s)
-        for (int f = 0; f < 5; ++f)
+        for (int f = 0; f < 8; ++f)
             cab[s][f] = map.at (ids::cab (s, cabFields[f]));
 
     const char* peqFields[] = { "freq", "gain", "q" };
     for (int i = 0; i < ParamEQParams::numBands; ++i)
         for (int f = 0; f < 3; ++f)
             peq[i][f] = map.at (ids::peq (i, peqFields[f]));
+
+    for (int c = 0; c < ids::numAmpChannels; ++c)
+        for (int k = 0; k < ids::numAmpKnobs; ++k)
+            amp[c][k] = map.at (ids::ampKnob (c, ids::ampKnobKeys[k]));
 }
 
 void ParamCache::fill (EngineParams& p) const
@@ -194,7 +293,7 @@ void ParamCache::fill (EngineParams& p) const
     p.monoOut   = get (ids::outputMode) > 0.5f;
     p.bypass    = on (ids::bypass);
 
-    p.gate = { on (ids::gateOn), get (ids::gateThresh), get (ids::gateRelease) };
+    p.gate = { on (ids::gateOn), get (ids::gateThresh), get (ids::gateRelease), on (ids::gateKey) };
     p.octaver = { on (ids::octOn), get (ids::octDry), get (ids::octDown1), get (ids::octDown2) };
     p.drop = { on (ids::dropOn), (int) std::round (get (ids::dropSemis)), get (ids::dropMix) };
     p.comp = { on (ids::compOn), get (ids::compThresh), get (ids::compRatio), get (ids::compAttack),
@@ -206,24 +305,33 @@ void ParamCache::fill (EngineParams& p) const
         p.geq.gainsDb[i] = geq[i]->load();
     p.geq.levelDb = get (ids::geqLevel);
 
-    p.amp.channel  = (int) get (ids::ampChannel);
-    p.amp.gain     = get (ids::ampGain);
-    p.amp.bass     = get (ids::ampBass);
-    p.amp.mid      = get (ids::ampMid);
-    p.amp.treble   = get (ids::ampTreble);
-    p.amp.presence = get (ids::ampPresence);
-    p.amp.depth    = get (ids::ampDepth);
-    p.amp.master   = get (ids::ampMaster);
-    p.amp.bright   = on (ids::ampBright);
-    p.amp.tight    = on (ids::ampTight);
+    p.amp.channel  = juce::jlimit (0, ids::numAmpChannels - 1, (int) get (ids::ampChannel));
+    {
+        auto* const* k = amp[p.amp.channel];
+        p.amp.gain     = k[0]->load();
+        p.amp.bass     = k[1]->load();
+        p.amp.mid      = k[2]->load();
+        p.amp.treble   = k[3]->load();
+        p.amp.presence = k[4]->load();
+        p.amp.depth    = k[5]->load();
+        p.amp.master   = k[6]->load();
+        p.amp.bright   = k[7]->load() > 0.5f;
+        p.amp.tight    = k[8]->load() > 0.5f;
+    }
+    p.amp.power = (int) get (ids::ampPower);
     p.useNam   = get (ids::ampMode) > 0.5f;
     p.namInDb  = get (ids::namIn);
     p.namOutDb = get (ids::namOut);
+    p.namCalibrate = on (ids::namCalibrate);
+    p.namInterfaceDbu = get (ids::namCalLevel);
+    p.namTone = { on (ids::namTone), get (ids::namBass), get (ids::namMid), get (ids::namTreble), get (ids::namPresence) };
 
     p.cab.on = on (ids::cabOn);
     for (int s = 0; s < 2; ++s)
         p.cab.slot[s] = { cab[s][0]->load() > 0.5f, (int) cab[s][1]->load(), cab[s][2]->load(),
-                          cab[s][3]->load(), cab[s][4]->load() };
+                          cab[s][3]->load(), cab[s][4]->load(), (int) cab[s][5]->load(), cab[s][6]->load(),
+                          cab[s][7]->load() > 0.5f };
+    p.cab.align = on (ids::cabAlign);
 
     p.peq.on = on (ids::peqOn);
     p.peq.hpfHz = get (ids::peqHpf);
@@ -242,9 +350,18 @@ void ParamCache::fill (EngineParams& p) const
     p.delay.toneHz   = get (ids::dlyTone);
     p.delay.mix      = get (ids::dlyMix);
     p.delay.pingPong = on (ids::dlyPing);
+    p.delay.mode     = (int) get (ids::dlyMode);
 
     p.reverb = { on (ids::revOn), get (ids::revSize), get (ids::revDamp), get (ids::revPredelay),
-                 get (ids::revWidth), get (ids::revMix) };
+                 get (ids::revWidth), get (ids::revMix), (int) get (ids::revMode), get (ids::revShimmer) };
+
+    p.wah = { on (ids::wahOn), get (ids::wahMode) > 0.5f, get (ids::wahPos), get (ids::wahSens), get (ids::wahQ) };
+    p.whammy = { on (ids::whamOn), (int) get (ids::whamInterval), get (ids::whamPos), get (ids::whamMix) };
+    p.phaser = { on (ids::phaOn), get (ids::phaRate), get (ids::phaDepth), get (ids::phaFeedback), get (ids::phaMix),
+                 (int) get (ids::phaStages) };
+    p.tremolo = { on (ids::tremOn), get (ids::tremRate), get (ids::tremDepth), get (ids::tremShape), on (ids::tremSync),
+                  on (ids::tremPan), (int) get (ids::tremDiv) };
+    p.doubler = { on (ids::dblOn), get (ids::dblWidth), get (ids::dblTime), get (ids::dblDetune) };
 }
 
 } // namespace abyssal

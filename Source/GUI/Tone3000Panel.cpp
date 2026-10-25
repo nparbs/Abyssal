@@ -35,18 +35,51 @@ struct Tone3000Panel::ToneListModel : juce::ListBoxModel
         g.setColour (selected ? colours::accent.withAlpha (0.25f) : (row % 2 ? colours::panelHi : colours::panel));
         g.fillRoundedRectangle (r, 5.0f);
 
+        // Creator avatar (their initial while it loads, or if they have none)
+        const juce::Rectangle<float> av (10.0f, (float) h * 0.5f - 15.0f, 30.0f, 30.0f);
+        if (auto img = panel.avatarFor (t.user); img.isValid())
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            juce::Path clip;
+            clip.addEllipse (av);
+            g.reduceClipRegion (clip);
+            g.drawImage (img, av, juce::RectanglePlacement::fillDestination);
+        }
+        else
+        {
+            g.setColour (colours::outline);
+            g.fillEllipse (av);
+            g.setColour (colours::textDim);
+            g.setFont (font (13.0f, true));
+            g.drawText (t.user.username.substring (0, 1).toUpperCase(), av, juce::Justification::centred);
+        }
+
+        const int textX = 50;
         g.setColour (colours::text);
         g.setFont (font (14.0f, true));
-        g.drawText (t.title, 12, 4, w - 24, 20, juce::Justification::centredLeft);
+        g.drawText (t.title, textX, 4, w - textX - 40, 20, juce::Justification::centredLeft);
         g.setColour (colours::textDim);
         g.setFont (font (12.0f));
-        g.drawText ("by @" + t.user.username + (t.user.verified ? "  (verified)" : ""), 12, 24, w - 120, 16, juce::Justification::centredLeft);
+        // display_name is only set for verified creators
+        const auto creator = t.user.verified && t.user.displayName.isNotEmpty() ? t.user.displayName + " (@" + t.user.username + ")"
+                                                                                : "@" + t.user.username;
+        g.drawText ("by " + creator, textX, 24, w - textX - 110, 16, juce::Justification::centredLeft);
         g.drawText (juce::String (t.modelsCount) + (t.isIR() ? " IRs" : " models"), w - 110, 24, 98, 16, juce::Justification::centredRight);
+
+        const bool fav = panel.isFavorite (t.id);
+        drawStar (g, starArea (w), fav, fav ? colours::amber : colours::textDim);
     }
 
-    void listBoxItemClicked (int row, const juce::MouseEvent&) override
+    static juce::Rectangle<float> starArea (int w) { return { (float) w - 30.0f, 5.0f, 16.0f, 16.0f }; }
+
+    void listBoxItemClicked (int row, const juce::MouseEvent& e) override
     {
-        if (juce::isPositiveAndBelow (row, panel.tones.size()))
+        if (! juce::isPositiveAndBelow (row, panel.tones.size()))
+            return;
+        // The event comes from the row component, which spans the list's width.
+        if (starArea (e.eventComponent->getWidth()).expanded (6.0f).contains (e.position))
+            panel.toggleFavorite (panel.tones[row]);
+        else
             panel.setTone (panel.tones[row]);
     }
 
@@ -170,6 +203,10 @@ Tone3000Panel::Tone3000Panel (AbyssalProcessor& p) : proc (p)
     pickButton.setColour (juce::TextButton::buttonColourId, colours::accent.withMultipliedBrightness (0.6f));
     pickButton.onClick = [this] { pickOnWebsite(); };
     downloadAll.onClick = [this] { downloadAllStandard(); };
+    loadMore.onClick = [this] { showList (currentTab, true); };
+    favoriteButton.setClickingTogglesState (false);
+    favoriteButton.setColour (juce::TextButton::buttonOnColourId, colours::amber.withMultipliedBrightness (0.6f));
+    favoriteButton.onClick = [this] { if (tone) toggleFavorite (*tone); };
 
     for (int i = 0; i < 5; ++i)
     {
@@ -182,6 +219,8 @@ Tone3000Panel::Tone3000Panel (AbyssalProcessor& p) : proc (p)
                                                              &namButton, &irButton, &pickButton, &toneList, &modelList,
                                                              &downloadAll, &toneLink })
         addAndMakeVisible (c);
+    addChildComponent (loadMore);
+    addChildComponent (favoriteButton);
 
     client->addChangeListener (this);
     client->setPublishableKey (proc.presets.getTone3000Key());
@@ -202,8 +241,8 @@ void Tone3000Panel::open (Target t)
     target = t;
     client->setPublishableKey (proc.presets.getTone3000Key());
     setFormat (t != Target::amp);
-    refreshConnection();
     setVisible (true);
+    refreshConnection();
     toFront (true);
     if (client->isConnected() && tones.isEmpty())
         showList (currentTab < 0 ? 0 : currentTab);
@@ -219,6 +258,16 @@ void Tone3000Panel::refreshConnection()
 {
     const bool hasKey = client->hasKey();
     const bool connected = client->isConnected();
+    if (! connected)
+    {
+        favoriteIds.clear();
+        favoritesLoaded = false;
+    }
+    else if (isVisible() && ! favoritesLoaded)
+    {
+        favoritesLoaded = true; // only once the panel is in use - no network traffic just for opening a project
+        loadKnownFavorites();
+    }
     keyEditor.setVisible (! hasKey);
     saveKey.setVisible (! hasKey);
     getKeyLink.setVisible (! hasKey);
@@ -226,6 +275,7 @@ void Tone3000Panel::refreshConnection()
     connectButton.setButtonText (connected ? "DISCONNECT" : "CONNECT");
     pickButton.setEnabled (hasKey);
     for (auto* t : tabs) t->setEnabled (connected);
+    refreshFavoriteButton();
     repaint();
 }
 
@@ -246,37 +296,128 @@ void Tone3000Panel::setStatus (const juce::String& text, bool isError)
     repaint();
 }
 
-void Tone3000Panel::showList (int tab)
+void Tone3000Panel::showList (int tab, bool nextPage)
 {
+    if (nextPage && (tab != currentTab || listPage >= listTotalPages))
+        return;
     currentTab = tab;
     for (int i = 0; i < tabs.size(); ++i)
         tabs[i]->setToggleState (i == tab, juce::dontSendNotification);
     if (! client->isConnected())
         return setStatus ("Connect to TONE3000 to see your lists.");
 
-    setStatus ("Loading " + juce::String (tabNames[tab]).toLowerCase() + "...");
+    const int page = nextPage ? listPage + 1 : 1;
+    setStatus ("Loading " + juce::String (tabNames[tab]).toLowerCase() + (page > 1 ? " (page " + juce::String (page) + ")..." : "..."));
+    loadMore.setEnabled (false);
     const int serial = ++requestSerial;
-    client->listTones (tabLists[tab], 1, [safe = juce::Component::SafePointer<Tone3000Panel> (this), serial] (t3k::Result<juce::Array<t3k::Tone>> r)
+    client->listTones (tabLists[tab], page, [safe = juce::Component::SafePointer<Tone3000Panel> (this), serial, page, tab] (t3k::Result<t3k::TonePage> r)
     {
         if (safe == nullptr || serial != safe->requestSerial) return;
-        safe->tones.clear();
+        if (page == 1)
+        {
+            safe->tones.clear();
+            safe->hiddenCount = 0;
+        }
         if (! r.ok)
         {
             safe->setStatus (r.error, true);
         }
         else
         {
+            safe->listPage = page;
+            safe->listTotalPages = r.value.totalPages;
             // These lists can't be filtered by format server-side, so filter here.
-            for (auto& t : r.value)
+            for (auto& t : r.value.tones)
+            {
+                if (tabLists[tab] == t3k::Client::List::favorited)
+                    safe->favoriteIds.addIfNotAlreadyThere (t.id);
                 if (t.isIR() == safe->irMode && (t.isIR() || t.format == "nam"))
                     safe->tones.add (t);
-            const int hidden = r.value.size() - safe->tones.size();
+                else
+                    ++safe->hiddenCount;
+            }
+            const int hidden = safe->hiddenCount;
             safe->setStatus (juce::String (safe->tones.size()) + (safe->irMode ? " IR tones" : " NAM tones")
-                             + (hidden > 0 ? "  (" + juce::String (hidden) + " of another format hidden)" : juce::String()));
+                             + (hidden > 0 ? "  (" + juce::String (hidden) + " of another format hidden)" : juce::String())
+                             + (safe->listPage < safe->listTotalPages ? "  -  more available" : juce::String()));
         }
+        safe->loadMore.setVisible (safe->listPage < safe->listTotalPages);
+        safe->loadMore.setEnabled (true);
         safe->toneList.updateContent();
         safe->toneList.repaint();
+        safe->refreshFavoriteButton();
     });
+}
+
+void Tone3000Panel::loadKnownFavorites (int page)
+{
+    // Quietly learns which tones are favourited so the stars are right on every tab.
+    client->listTones (t3k::Client::List::favorited, page, [safe = juce::Component::SafePointer<Tone3000Panel> (this), page] (t3k::Result<t3k::TonePage> r)
+    {
+        if (safe == nullptr || ! r.ok) return;
+        for (auto& t : r.value.tones)
+            safe->favoriteIds.addIfNotAlreadyThere (t.id);
+        safe->toneList.repaint();
+        safe->refreshFavoriteButton();
+        if (page < r.value.totalPages && page < 10)
+            safe->loadKnownFavorites (page + 1);
+    });
+}
+
+void Tone3000Panel::toggleFavorite (const t3k::Tone& t)
+{
+    const bool makeFavorite = ! isFavorite (t.id);
+    // Optimistic: flip the star now, put it back if the request fails.
+    if (makeFavorite) favoriteIds.addIfNotAlreadyThere (t.id);
+    else              favoriteIds.removeAllInstancesOf (t.id);
+    toneList.repaint();
+    refreshFavoriteButton();
+
+    client->setFavorite (t.id, makeFavorite, [safe = juce::Component::SafePointer<Tone3000Panel> (this), t, makeFavorite] (t3k::Result<bool> r)
+    {
+        if (safe == nullptr) return;
+        if (! r.ok)
+        {
+            if (makeFavorite) safe->favoriteIds.removeAllInstancesOf (t.id);
+            else              safe->favoriteIds.addIfNotAlreadyThere (t.id);
+            safe->setStatus (r.error, true);
+        }
+        else
+        {
+            safe->setStatus ((makeFavorite ? "Added " : "Removed ") + t.title + (makeFavorite ? " to" : " from") + " your TONE3000 favorites.");
+        }
+        safe->toneList.repaint();
+        safe->refreshFavoriteButton();
+    });
+}
+
+void Tone3000Panel::refreshFavoriteButton()
+{
+    favoriteButton.setVisible (tone.has_value() && client->isConnected());
+    if (! tone) return;
+    const bool fav = isFavorite (tone->id);
+    favoriteButton.setButtonText (fav ? "FAVORITED" : "FAVORITE");
+    favoriteButton.setToggleState (fav, juce::dontSendNotification);
+}
+
+juce::Image Tone3000Panel::avatarFor (const t3k::EmbeddedUser& user)
+{
+    if (user.avatarUrl.isEmpty())
+        return {};
+    if (auto it = avatars.find (user.avatarUrl); it != avatars.end())
+        return it->second;
+    if (! avatarRequests.contains (user.avatarUrl))
+    {
+        avatarRequests.add (user.avatarUrl);
+        client->fetchImage (user.avatarUrl, [safe = juce::Component::SafePointer<Tone3000Panel> (this), url = user.avatarUrl] (juce::Image img)
+        {
+            if (safe == nullptr) return;
+            // Keep a small copy: rows only draw it at 30 px.
+            safe->avatars[url] = img.isValid() ? img.rescaled (64, 64, juce::Graphics::highResamplingQuality) : juce::Image();
+            safe->toneList.repaint();
+        });
+    }
+    return {};
 }
 
 void Tone3000Panel::pickOnWebsite()
@@ -312,6 +453,7 @@ void Tone3000Panel::setTone (const t3k::Tone& t)
     if (t.id == 0)
     {
         tone.reset();
+        refreshFavoriteButton();
         toneLink.setVisible (false);
         downloadAll.setEnabled (false);
         repaint();
@@ -319,6 +461,7 @@ void Tone3000Panel::setTone (const t3k::Tone& t)
     }
 
     tone = t;
+    refreshFavoriteButton();
     if (t.isIR() != irMode) setFormat (t.isIR());
     toneLink.setURL (juce::URL (t.url.isNotEmpty() ? t.url : "https://www.tone3000.com/tones/" + juce::String (t.id)));
     toneLink.setVisible (true);
@@ -447,13 +590,18 @@ void Tone3000Panel::resized()
     auto tabCol = r.removeFromLeft (150);
     for (auto* t : tabs) { t->setBounds (tabCol.removeFromTop (32).reduced (0, 2)); tabCol.removeFromTop (2); }
     r.removeFromLeft (12);
-    toneList.setBounds (r.removeFromLeft (360));
+    auto listCol = r.removeFromLeft (360);
+    loadMore.setBounds (listCol.removeFromBottom (30).reduced (60, 0));
+    listCol.removeFromBottom (6);
+    toneList.setBounds (listCol);
     r.removeFromLeft (16);
 
     detailArea = r;
     auto d = r;
     d.removeFromTop (70);
-    toneLink.setBounds (d.removeFromTop (20).removeFromLeft (180));
+    auto linkRow = d.removeFromTop (24);
+    toneLink.setBounds (linkRow.removeFromLeft (180));
+    favoriteButton.setBounds (linkRow.removeFromRight (120));
     d.removeFromTop (6);
     downloadAll.setBounds (d.removeFromBottom (32).removeFromRight (220));
     d.removeFromBottom (8);
